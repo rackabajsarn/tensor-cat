@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<h1 style="padding-left: 20px;">Gallery Mode</h1>
+{% for category, images in categories.items() %}
+<h2>{{ category }}</h2>
+<div class="image-grid">
+    {% for image in images %}
+    <div class="image-item">
+        <img src="{{ url_for('send_image', mode='gallery', filename=image.filepath) }}" alt="{{ image.filename }}" onclick="openModal('{{ image.filepath }}', '{{ image.filename }}')">
+        <p>{{ image.filename }}</p>
+    </div>
+    {% endfor %}
+</div>
+{% endfor %}
+
+<!-- Modal -->
+<div id="myModal" class="modal">
+    <span class="close" onclick="closeModal()">&times;</span>
+    <div class="modal-content">
+        <img id="modalImage" src="" alt="Enlarged Image">
+        <div class="modal-buttons">
+            <button onclick="goBack()">Back</button>
+            <form method="post" action="" id="deleteForm">
+                <button type="submit">Remove</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    function openModal(filepath, filename) {
+        var modal = document.getElementById("myModal");
+        var modalImg = document.getElementById("modalImage");
+        var deleteForm = document.getElementById("deleteForm");
+
+        modal.style.display = "block";
+        modalImg.src = "{{ url_for('send_image', mode='gallery', filename='') }}" + filepath;
+        deleteForm.action = "{{ url_for('delete_image', filepath='') }}" + filepath;
+    }
+
+    function closeModal() {
+        var modal = document.getElementById("myModal");
+        modal.style.display = "none";
+    }
+
+    function goBack() {
+        closeModal();
+    }
+
+    // Close modal when clicking outside of the modal content
+    window.onclick = function(event) {
+        var modal = document.getElementById("myModal");
+        if (event.target == modal) {
+            modal.style.display = "none";
+        }
+    }
+</script>
+{% endblock %}
