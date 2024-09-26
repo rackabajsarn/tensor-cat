@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <h1 style="padding-left: 20px;">Classification Mode</h1>
+
+<!-- Delete All Images Button -->
+<button class="delete-all-button" onclick="openDeleteModal()">Delete All Images</button>
+
+<!-- Image Grid -->
 <div class="image-grid">
     {% for image in images %}
     <div class="image-item">
@@ -10,7 +15,7 @@
     {% endfor %}
 </div>
 
-<!-- Modal -->
+<!-- Classification Modal (Existing) -->
 <div id="myModal" class="modal">
     <span class="close" onclick="closeModal()">&times;</span>
     <div class="modal-content">
@@ -26,7 +31,22 @@
     </div>
 </div>
 
+<!-- Delete Confirmation Modal (New) -->
+<div id="deleteModal" class="modal">
+    <span class="close" onclick="closeDeleteModal()">&times;</span>
+    <div class="modal-content">
+        <p style="color: white; text-align: center;">Are you sure you want to delete all images?</p>
+        <div class="modal-buttons">
+            <button onclick="closeDeleteModal()">Cancel</button>
+            <form method="post" action="{{ url_for('delete_all_images') }}">
+                <button type="submit" class="confirm-delete-button">Yes, Delete All</button>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
+    // Existing functions for image classification modal
     function openModal(filename) {
         var modal = document.getElementById("myModal");
         var modalImg = document.getElementById("modalImage");
@@ -44,11 +64,26 @@
         modal.style.display = "none";
     }
 
-    // Close modal when clicking outside of the modal content
+    // New functions for delete confirmation modal
+    function openDeleteModal() {
+        var modal = document.getElementById("deleteModal");
+        modal.style.display = "block";
+    }
+
+    function closeDeleteModal() {
+        var modal = document.getElementById("deleteModal");
+        modal.style.display = "none";
+    }
+
+    // Modified window.onclick to handle both modals
     window.onclick = function(event) {
-        var modal = document.getElementById("myModal");
-        if (event.target == modal) {
-            modal.style.display = "none";
+        var classificationModal = document.getElementById("myModal");
+        var deleteModal = document.getElementById("deleteModal");
+        if (event.target == classificationModal) {
+            classificationModal.style.display = "none";
+        }
+        if (event.target == deleteModal) {
+            deleteModal.style.display = "none";
         }
     }
 </script>

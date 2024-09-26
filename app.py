@@ -95,29 +95,20 @@ def classify():
     images.sort(reverse=True)  # Show latest images first
     return render_template('index.html', mode='classify', images=images)
 
-@app.route('/gallery')
-def gallery():
-    # Collect images from dataset directories
-    categories = {
-        'Prey': [],
-        'No Prey': []
-    }
-
-    for subset in ['train', 'validation']:
-        for label in ['prey', 'no_prey']:
-            dir_path = os.path.join(DATASET_DIR, subset, label)
-            files = os.listdir(dir_path)
-            for file in files:
-                categories['Prey' if label == 'prey' else 'No Prey'].append({
-                    'filename': file,
-                    'filepath': f'{subset}/{label}/{file}'
-                })
-
-    # Sort images by filename (assumed timestamp)
-    for key in categories:
-        categories[key].sort(key=lambda x: x['filename'], reverse=True)
-
-    return render_template('gallery.html', mode='gallery', categories=categories)
+# New Route: Delete All Images
+@app.route('/delete_all_images', methods=['POST'])
+def delete_all_images():
+    # Delete all images in the classification folder
+    if os.path.exists(STATIC_IMAGES_DIR):
+        for filename in os.listdir(STATIC_IMAGES_DIR):
+            file_path = os.path.join(STATIC_IMAGES_DIR, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        print("All images deleted from classification folder.")
+        flash("All images have been deleted.", 'success')
+    else:
+        flash("Classification folder does not exist.", 'error')
+    return redirect(url_for('classify'))
 
 @app.route('/classify/<action>/<filename>', methods=['POST'])
 def classify_image(action, filename):
@@ -141,6 +132,30 @@ def classify_image(action, filename):
 
     # Redirect back to classify
     return redirect(url_for('classify'))
+
+@app.route('/gallery')
+def gallery():
+    # Collect images from dataset directories
+    categories = {
+        'Prey': [],
+        'No Prey': []
+    }
+
+    for subset in ['train', 'validation']:
+        for label in ['prey', 'no_prey']:
+            dir_path = os.path.join(DATASET_DIR, subset, label)
+            files = os.listdir(dir_path)
+            for file in files:
+                categories['Prey' if label == 'prey' else 'No Prey'].append({
+                    'filename': file,
+                    'filepath': f'{subset}/{label}/{file}'
+                })
+
+    # Sort images by filename (assumed timestamp)
+    for key in categories:
+        categories[key].sort(key=lambda x: x['filename'], reverse=True)
+
+    return render_template('gallery.html', mode='gallery', categories=categories)
 
 @app.route('/gallery/delete/<path:filepath>', methods=['POST'])
 def delete_image(filepath):

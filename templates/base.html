@@ -190,6 +190,49 @@
                 right: 15px;
             }
         }
+
+         /* Styles for the Delete All Images button */
+        .delete-all-button {
+            background-color: #d9534f; /* Bootstrap's btn-danger color */
+            color: white;
+            padding: 12px 24px;
+            margin: 20px;
+            font-size: 18px;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+
+        .delete-all-button:hover {
+            background-color: #c9302c;
+        }
+
+        /* Styles for the confirm delete button inside the modal */
+        .confirm-delete-button {
+            background-color: #d9534f; /* Bootstrap's btn-danger color */
+            color: white;
+            padding: 12px 24px;
+            font-size: 18px;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+
+        .confirm-delete-button:hover {
+            background-color: #c9302c;
+        }
+
+        /* Adjust modal content for delete confirmation */
+        #deleteModal .modal-content {
+            background-color: #444; /* Dark background */
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 10px;
+            width: 80%;
+            max-width: 400px;
+            margin: auto;
+        }
     </style>
 </head>
 <body>
