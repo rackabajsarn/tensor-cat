@@ -1,92 +1,37 @@
+<!-- templates/index.html -->
+
 {% extends "base.html" %}
 {% block content %}
 <h1 style="padding-left: 20px;">Classification Mode</h1>
-
-<!-- Conditionally display the Delete All Images Button -->
-{% if images|length > 0 %}
-<button class="delete-all-button" onclick="openDeleteModal()">Delete All Images</button>
-{% endif %}
 
 <!-- Image Grid -->
 <div class="image-grid">
     {% for image in images %}
     <div class="image-item">
-        <img src="{{ url_for('send_image', mode='classify', filename=image) }}" alt="{{ image }}" onclick="openModal('{{ image }}')">
+        <img src="{{ url_for('send_image', mode='classify', filename=image) }}" alt="{{ image }}" onclick="openModal('{{ image }}', 'classify')">
         <p>{{ image }}</p>
     </div>
     {% endfor %}
 </div>
 
-<!-- Classification Modal (Existing) -->
-<div id="myModal" class="modal">
+<!-- Classification Modal -->
+<div id="classifyModal" class="modal">
     <span class="close" onclick="closeModal()">&times;</span>
     <div class="modal-content">
-        <img id="modalImage" src="" alt="Enlarged Image">
+        <div class="image-container">
+            <img id="modalImage" src="" alt="Enlarged Image" data-filename="" data-mode="classify">
+            <!-- Overlay Buttons -->
+            <div class="overlay-buttons">
+                <button class="label-button" id="btn-cat" data-label="cat">Cat</button>
+                <button class="label-button" id="btn-morris" data-label="morris">Morris</button>
+                <button class="label-button" id="btn-entering" data-label="entering">Entering</button>
+                <button class="label-button" id="btn-prey" data-label="prey">Prey</button>
+            </div>
+        </div>
         <div class="modal-buttons">
-            <form method="post" action="" id="preyForm">
-                <button type="submit">Prey</button>
-            </form>
-            <form method="post" action="" id="noPreyForm">
-                <button type="submit">No Prey</button>
-            </form>
+            <button id="save-button">Save</button>
+            <button id="back-button">Back</button>
         </div>
     </div>
 </div>
-
-<!-- Delete Confirmation Modal (New) -->
-<div id="deleteModal" class="modal">
-    <span class="close" onclick="closeDeleteModal()">&times;</span>
-    <div class="modal-content">
-        <p style="color: white; text-align: center;">Are you sure you want to delete all images?</p>
-        <div class="modal-buttons">
-            <button onclick="closeDeleteModal()">Cancel</button>
-            <form method="post" action="{{ url_for('delete_all_images') }}">
-                <button type="submit" class="confirm-delete-button">Yes, Delete All</button>
-            </form>
-        </div>
-    </div>
-</div>
-
-<script>
-    // Existing functions for image classification modal
-    function openModal(filename) {
-        var modal = document.getElementById("myModal");
-        var modalImg = document.getElementById("modalImage");
-        var preyForm = document.getElementById("preyForm");
-        var noPreyForm = document.getElementById("noPreyForm");
-
-        modal.style.display = "block";
-        modalImg.src = "{{ url_for('send_image', mode='classify', filename='') }}" + filename;
-        preyForm.action = "{{ url_for('classify_image', action='prey', filename='') }}" + filename;
-        noPreyForm.action = "{{ url_for('classify_image', action='no_prey', filename='') }}" + filename;
-    }
-
-    function closeModal() {
-        var modal = document.getElementById("myModal");
-        modal.style.display = "none";
-    }
-
-    // Functions for delete confirmation modal
-    function openDeleteModal() {
-        var modal = document.getElementById("deleteModal");
-        modal.style.display = "block";
-    }
-
-    function closeDeleteModal() {
-        var modal = document.getElementById("deleteModal");
-        modal.style.display = "none";
-    }
-
-    // Handle clicks outside the modals
-    window.onclick = function(event) {
-        var classificationModal = document.getElementById("myModal");
-        var deleteModal = document.getElementById("deleteModal");
-        if (event.target == classificationModal) {
-            classificationModal.style.display = "none";
-        }
-        if (event.target == deleteModal) {
-            deleteModal.style.display = "none";
-        }
-    }
-</script>
 {% endblock %}

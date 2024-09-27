@@ -1,0 +1,11 @@
+<!-- templates/about.html -->
+
+{% extends "base.html" %}
+{% block content %}
+<h1 style="padding-left: 20px;">About</h1>
+<div style="padding: 20px;">
+    <p>This application allows you to classify images with four binary labels: <strong>Cat</strong>, <strong>Morris</strong>, <strong>Entering</strong>, and <strong>Prey</strong>. Labels are stored directly within the image's EXIF metadata.</p>
+    <p>Images are received via MQTT, stored in the <code>static/images</code> directory, and can be classified through the web interface.</p>
+    <p>Once classified, images are moved to the <code>dataset/images</code> directory. You can also reclassify images from the gallery.</p>
+</div>
+{% endblock %}
