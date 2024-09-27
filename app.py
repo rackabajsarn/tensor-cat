@@ -135,7 +135,7 @@ def write_labels(image_path, labels):
         else:
             # No EXIF data present
             exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
-        exif_dict = piexif.load(img.info.get('exif', b''))
+        #exif_dict = piexif.load(img.info.get('exif', b''))
         description = json.dumps(labels)
         exif_dict['0th'][piexif.ImageIFD.ImageDescription] = description.encode('utf-8')
         exif_bytes = piexif.dump(exif_dict)
