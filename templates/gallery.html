@@ -7,25 +7,23 @@
 <!-- Filter Buttons -->
 <div class="filter-buttons">
     <button class="filter-button active" data-filter="all">All</button>
-    <button class="filter-button" data-filter="cat">Cat</button>
-    <button class="filter-button" data-filter="morris">Morris</button>
-    <button class="filter-button" data-filter="entering">Entering</button>
-    <button class="filter-button" data-filter="prey">Prey</button>
+    <button class="filter-button" data-filter="cat"><i class="fas fa-cat"></i> Cat</button>
+    <button class="filter-button" data-filter="morris"><i class="fas fa-user"></i> Morris</button>
+    <button class="filter-button" data-filter="entering"><i class="fas fa-sign-in-alt"></i> Entering</button>
+    <button class="filter-button" data-filter="prey"><i class="fas fa-dog"></i> Prey</button>
 </div>
 
 <!-- Image Grid -->
 <div class="image-grid">
-    {% for category, images in categories.items() %}
-        {% for image in images %}
-            {% set labels = read_labels(image) %}
-            <div class="image-item" data-cat="{{ 'yes' if labels.cat else 'no' }}"
-                                 data-morris="{{ 'yes' if labels.morris else 'no' }}"
-                                 data-entering="{{ 'yes' if labels.entering else 'no' }}"
-                                 data-prey="{{ 'yes' if labels.prey else 'no' }}">
-                <img src="{{ url_for('send_image', mode='gallery', filename=image) }}" alt="{{ image }}" onclick="openModal('{{ image }}', 'gallery')">
-                <p>{{ image }}</p>
-            </div>
-        {% endfor %}
+    {% for image in images %}
+        {% set labels = read_labels(image) %}
+        <div class="image-item" data-cat="{{ 'yes' if labels.cat else 'no' }}"
+                             data-morris="{{ 'yes' if labels.morris else 'no' }}"
+                             data-entering="{{ 'yes' if labels.entering else 'no' }}"
+                             data-prey="{{ 'yes' if labels.prey else 'no' }}">
+            <img src="{{ url_for('send_image', mode='gallery', filename=image) }}" alt="{{ image }}" onclick="openModal('{{ image }}', 'gallery')">
+            <p>{{ image }}</p>
+        </div>
     {% endfor %}
 </div>
 

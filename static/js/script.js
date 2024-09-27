@@ -139,14 +139,14 @@ function filterImages(filter) {
 
     imageItems.forEach(item => {
         if (filter === 'all') {
-            item.style.display = 'block';
+            item.classList.remove('hide');
         } else {
-            // Check if the image has the corresponding label
             if (item.getAttribute(`data-${filter}`) === 'yes') {
-                item.style.display = 'block';
+                item.classList.remove('hide');
             } else {
-                item.style.display = 'none';
+                item.classList.add('hide');
             }
         }
     });
 }
+
