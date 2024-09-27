@@ -240,41 +240,8 @@ def update_label():
 @app.route('/gallery')
 def gallery():
     images = get_image_list(DATASET_IMAGES_DIR)
-    categories = {
-        'Prey': [],
-        'No Prey': [],
-        'Cat': [],
-        'Not Cat': [],
-        'Morris': [],
-        'Not Morris': [],
-        'Entering': [],
-        'Leaving': []
-    }
+    return render_template('gallery.html', mode='gallery', images=images)
 
-    for filename in images:
-        image_path = os.path.join(DATASET_IMAGES_DIR, filename)
-        labels = read_labels(image_path)
-        if labels.get('prey', False):
-            categories['Prey'].append(filename)
-        else:
-            categories['No Prey'].append(filename)
-        if labels.get('cat', False):
-            categories['Cat'].append(filename)
-        else:
-            categories['Not Cat'].append(filename)
-        if labels.get('morris', False):
-            categories['Morris'].append(filename)
-        else:
-            categories['Not Morris'].append(filename)
-        if labels.get('entering', False):
-            categories['Entering'].append(filename)
-        else:
-            categories['Leaving'].append(filename)
-
-    # Remove empty categories
-    categories = {k: v for k, v in categories.items() if v}
-
-    return render_template('gallery.html', mode='gallery', categories=categories)
 
 @app.route('/gallery/delete/<filename>', methods=['POST'])
 def delete_image(filename):

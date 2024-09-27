@@ -23,6 +23,10 @@
                              data-prey="{{ 'yes' if labels.prey else 'no' }}">
             <img src="{{ url_for('send_image', mode='gallery', filename=image) }}" alt="{{ image }}" onclick="openModal('{{ image }}', 'gallery')">
             <p>{{ image }}</p>
+            <!-- Debugging Labels (remove after testing) -->
+            <p class="labels-debug">
+                Cat: {{ labels.cat }}, Morris: {{ labels.morris }}, Entering: {{ labels.entering }}, Prey: {{ labels.prey }}
+            </p>
         </div>
     {% endfor %}
 </div>
