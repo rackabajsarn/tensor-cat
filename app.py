@@ -3,15 +3,16 @@ import threading
 import base64
 import datetime
 import random
+import credentials
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask import send_from_directory
 from paho.mqtt import client as mqtt_client
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key'  # Replace with a secure secret key
+app.secret_key = credentials.SECRET_KEY
 
 # MQTT Configuration
-MQTT_BROKER = '192.168.1.185'  # Replace with your MQTT broker IP
+MQTT_BROKER = credentials.MQTT_SERVER
 MQTT_PORT = 1883
 MQTT_TOPIC = 'catflap/image'
 
