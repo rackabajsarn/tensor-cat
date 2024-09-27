@@ -123,6 +123,18 @@ def read_labels(image_path):
 def write_labels(image_path, labels):
     try:
         img = Image.open(image_path)
+        # Attempt to retrieve existing EXIF data
+        exif_bytes = img.info.get('exif', None)
+        
+        if exif_bytes:
+            try:
+                exif_dict = piexif.load(exif_bytes)
+            except piexif.InvalidImageDataError:
+                print(f"Invalid EXIF data for {image_path}, initializing new EXIF.")
+                exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+        else:
+            # No EXIF data present
+            exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
         exif_dict = piexif.load(img.info.get('exif', b''))
         description = json.dumps(labels)
         exif_dict['0th'][piexif.ImageIFD.ImageDescription] = description.encode('utf-8')
