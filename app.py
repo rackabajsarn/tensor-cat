@@ -142,6 +142,16 @@ def send_mqtt_message(message):
     except Exception as e:
         print(f"Error sending MQTT message: {e}")
 
+# Make read_labels available to templates
+@app.context_processor
+def utility_processor():
+    def get_labels(image_filename):
+        image_path = os.path.join(DATASET_IMAGES_DIR, image_filename)
+        if not os.path.exists(image_path):
+            image_path = os.path.join(STATIC_IMAGES_DIR, image_filename)
+        return read_labels(image_path)
+    return dict(read_labels=get_labels)
+
 # Flask Routes
 
 @app.route('/')
@@ -158,7 +168,7 @@ def update_label():
     data = request.get_json()
     filename = data.get('filename')
     label = data.get('label')
-    action = data.get('action')  # 'toggle', 'save', or 'back'
+    action = data.get('action')  # 'toggle', 'save', 'back', or 'get_labels'
     mode = data.get('mode', 'classify')  # 'classify' or 'gallery'
 
     if not filename or not action:
@@ -220,6 +230,10 @@ def update_label():
         # No action needed on the server side
         return jsonify({'success': True, 'message': 'Back action received.'})
 
+    elif action == 'get_labels':
+        labels = read_labels(image_path)
+        return jsonify({'success': True, 'labels': labels})
+
     else:
         return jsonify({'success': False, 'message': 'Invalid action.'}), 400
 
@@ -270,7 +284,7 @@ def delete_image(filename):
     if os.path.exists(image_path):
         os.remove(image_path)
         print(f"Deleted {image_path}")
-        flash(f"Image {filename} deleted.")
+        flash(f"Image {filename} deleted.", 'success')
     else:
         flash("Image not found.", 'error')
 

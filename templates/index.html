@@ -22,16 +22,19 @@
             <img id="modalImage" src="" alt="Enlarged Image" data-filename="" data-mode="classify">
             <!-- Overlay Buttons -->
             <div class="overlay-buttons">
-                <button class="label-button" id="btn-cat" data-label="cat">Cat</button>
-                <button class="label-button" id="btn-morris" data-label="morris">Morris</button>
-                <button class="label-button" id="btn-entering" data-label="entering">Entering</button>
-                <button class="label-button" id="btn-prey" data-label="prey">Prey</button>
+                <button class="label-button" id="btn-cat" data-label="cat"><i class="fas fa-cat"></i> Cat</button>
+                <button class="label-button" id="btn-morris" data-label="morris"><i class="fas fa-user"></i> Morris</button>
+                <button class="label-button" id="btn-entering" data-label="entering"><i class="fas fa-sign-in-alt"></i> Entering</button>
+                <button class="label-button" id="btn-prey" data-label="prey"><i class="fas fa-dog"></i> Prey</button>
             </div>
         </div>
         <div class="modal-buttons">
-            <button id="save-button">Save</button>
-            <button id="back-button">Back</button>
+            <button id="save-button" class="save-button">Save</button>
+            <button id="back-button" class="back-button">Back</button>
         </div>
     </div>
 </div>
+
+<!-- Include Font Awesome for Icons -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 {% endblock %}

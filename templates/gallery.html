@@ -4,17 +4,30 @@
 {% block content %}
 <h1 style="padding-left: 20px;">Gallery Mode</h1>
 
-{% for category, images in categories.items() %}
-<h2>{{ category }}</h2>
+<!-- Filter Buttons -->
+<div class="filter-buttons">
+    <button class="filter-button active" data-filter="all">All</button>
+    <button class="filter-button" data-filter="cat">Cat</button>
+    <button class="filter-button" data-filter="morris">Morris</button>
+    <button class="filter-button" data-filter="entering">Entering</button>
+    <button class="filter-button" data-filter="prey">Prey</button>
+</div>
+
+<!-- Image Grid -->
 <div class="image-grid">
-    {% for image in images %}
-    <div class="image-item">
-        <img src="{{ url_for('send_image', mode='gallery', filename=image) }}" alt="{{ image }}" onclick="openModal('{{ image }}', 'gallery')">
-        <p>{{ image }}</p>
-    </div>
+    {% for category, images in categories.items() %}
+        {% for image in images %}
+            {% set labels = read_labels(image) %}
+            <div class="image-item" data-cat="{{ 'yes' if labels.cat else 'no' }}"
+                                 data-morris="{{ 'yes' if labels.morris else 'no' }}"
+                                 data-entering="{{ 'yes' if labels.entering else 'no' }}"
+                                 data-prey="{{ 'yes' if labels.prey else 'no' }}">
+                <img src="{{ url_for('send_image', mode='gallery', filename=image) }}" alt="{{ image }}" onclick="openModal('{{ image }}', 'gallery')">
+                <p>{{ image }}</p>
+            </div>
+        {% endfor %}
     {% endfor %}
 </div>
-{% endfor %}
 
 <!-- Classification Modal (for reclassification) -->
 <div id="classifyModal" class="modal">
@@ -24,16 +37,19 @@
             <img id="modalImage" src="" alt="Enlarged Image" data-filename="" data-mode="gallery">
             <!-- Overlay Buttons -->
             <div class="overlay-buttons">
-                <button class="label-button" id="btn-cat" data-label="cat">Cat</button>
-                <button class="label-button" id="btn-morris" data-label="morris">Morris</button>
-                <button class="label-button" id="btn-entering" data-label="entering">Entering</button>
-                <button class="label-button" id="btn-prey" data-label="prey">Prey</button>
+                <button class="label-button" id="btn-cat" data-label="cat"><i class="fas fa-cat"></i> Cat</button>
+                <button class="label-button" id="btn-morris" data-label="morris"><i class="fas fa-user"></i> Morris</button>
+                <button class="label-button" id="btn-entering" data-label="entering"><i class="fas fa-sign-in-alt"></i> Entering</button>
+                <button class="label-button" id="btn-prey" data-label="prey"><i class="fas fa-dog"></i> Prey</button>
             </div>
         </div>
         <div class="modal-buttons">
-            <button id="save-button">Save</button>
-            <button id="back-button">Back</button>
+            <button id="save-button" class="save-button">Save</button>
+            <button id="back-button" class="back-button">Back</button>
         </div>
     </div>
 </div>
+
+<!-- Include Font Awesome for Icons -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 {% endblock %}

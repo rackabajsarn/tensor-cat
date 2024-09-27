@@ -22,6 +22,20 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('back-button').addEventListener('click', () => {
         closeModal();
     });
+
+    // Filter Buttons
+    const filterButtons = document.querySelectorAll('.filter-button');
+    filterButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            // Remove 'active' class from all filter buttons
+            filterButtons.forEach(btn => btn.classList.remove('active'));
+            // Add 'active' class to the clicked button
+            button.classList.add('active');
+
+            const filter = button.getAttribute('data-filter');
+            filterImages(filter);
+        });
+    });
 });
 
 // Function to toggle label
@@ -117,4 +131,22 @@ window.onclick = function(event) {
     if (event.target == modal) {
         modal.style.display = "none";
     }
+}
+
+// Function to filter images based on selected label
+function filterImages(filter) {
+    const imageItems = document.querySelectorAll('.image-item');
+
+    imageItems.forEach(item => {
+        if (filter === 'all') {
+            item.style.display = 'block';
+        } else {
+            // Check if the image has the corresponding label
+            if (item.getAttribute(`data-${filter}`) === 'yes') {
+                item.style.display = 'block';
+            } else {
+                item.style.display = 'none';
+            }
+        }
+    });
 }
