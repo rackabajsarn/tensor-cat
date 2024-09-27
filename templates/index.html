@@ -2,8 +2,10 @@
 {% block content %}
 <h1 style="padding-left: 20px;">Classification Mode</h1>
 
-<!-- Delete All Images Button -->
+<!-- Conditionally display the Delete All Images Button -->
+{% if images|length > 0 %}
 <button class="delete-all-button" onclick="openDeleteModal()">Delete All Images</button>
+{% endif %}
 
 <!-- Image Grid -->
 <div class="image-grid">
@@ -64,7 +66,7 @@
         modal.style.display = "none";
     }
 
-    // New functions for delete confirmation modal
+    // Functions for delete confirmation modal
     function openDeleteModal() {
         var modal = document.getElementById("deleteModal");
         modal.style.display = "block";
@@ -75,7 +77,7 @@
         modal.style.display = "none";
     }
 
-    // Modified window.onclick to handle both modals
+    // Handle clicks outside the modals
     window.onclick = function(event) {
         var classificationModal = document.getElementById("myModal");
         var deleteModal = document.getElementById("deleteModal");
