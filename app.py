@@ -79,6 +79,7 @@ def mqtt_on_message(client, userdata, msg):
     except Exception as e:
         print(f"Error processing message: {e}")
 
+
 def mqtt_listen():
     client = mqtt_client.Client()
     client.on_connect = mqtt_on_connect
