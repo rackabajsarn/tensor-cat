@@ -256,21 +256,6 @@ def gallery():
     images = get_image_list(DATASET_IMAGES_DIR)
     return render_template('gallery.html', mode='gallery', images=images)
 
-
-@app.route('/gallery/delete/<filename>', methods=['POST'])
-def delete_image(filename):
-    # Securely handle the filename
-    filename = os.path.basename(filename)
-    image_path = os.path.join(DATASET_IMAGES_DIR, filename)
-    if os.path.exists(image_path):
-        os.remove(image_path)
-        print(f"Deleted {image_path}")
-        flash(f"Image {filename} deleted.", 'success')
-    else:
-        flash("Image not found.", 'error')
-
-    return redirect(url_for('gallery'))
-
 @app.route('/delete_image', methods=['POST'])
 def delete_image():
     data = request.get_json()
