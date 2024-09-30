@@ -252,6 +252,20 @@ body {
     transition: color 0.3s, transform 0.2s;
 }
 
+.delete-button {
+    background-color: #e74c3c; /* Red color */
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    cursor: pointer;
+    border-radius: 5px;
+    margin-left: 10px; /* Space between buttons */
+}
+
+.delete-button:hover {
+    background-color: #c0392b;
+}
+
 .close:hover,
 .close:focus {
     color: #1abc9c;

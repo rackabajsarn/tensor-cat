@@ -23,6 +23,13 @@ document.addEventListener('DOMContentLoaded', () => {
         closeModal();
     });
 
+    // Delete Button
+    document.getElementById('delete-button').addEventListener('click', () => {
+        const filename = document.getElementById('modalImage').getAttribute('data-filename');
+        const mode = document.getElementById('modalImage').getAttribute('data-mode');
+        deleteImage(filename, mode);
+    });
+
     // Filter Buttons
     const filterButtons = document.querySelectorAll('.filter-button');
     filterButtons.forEach(button => {
@@ -64,7 +71,7 @@ function toggleLabel(button, label, filename, mode) {
     });
 }
 
-// Function to save image
+// Function to save image without popup
 function saveImage(filename, mode) {
     fetch('/update_label', {
         method: 'POST',
@@ -74,10 +81,10 @@ function saveImage(filename, mode) {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            alert('Image saved successfully.');
+            // Optionally, you can update the UI here (e.g., move the image to gallery)
             closeModal();
-            // Reload the page to reflect changes
-            window.location.reload();
+            // Refresh the classify view or remove the image from the classify list
+            window.location.reload(); // Alternatively, implement a more efficient UI update
         } else {
             alert('Failed to save image: ' + data.message);
         }
@@ -85,6 +92,42 @@ function saveImage(filename, mode) {
     .catch(error => {
         console.error('Error:', error);
         alert('An error occurred while saving the image.');
+    });
+}
+
+// Function to delete image
+function deleteImage(filename, mode) {
+    if (!confirm('Are you sure you want to delete this image?')) {
+        return; // User cancelled deletion
+    }
+
+    fetch('/delete_image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 'filename': filename, 'mode': mode })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Close the modal
+            closeModal();
+
+            // Remove the image from the DOM
+            const imageElement = document.querySelector(`.image-item img[src="/image/${mode}/${filename}"]`);
+            if (imageElement) {
+                imageElement.parentElement.remove();
+            }
+
+            // Optionally, display a success message without a popup
+            // For example, update a status div or use a toast notification library
+            console.log('Image deleted successfully.');
+        } else {
+            alert('Failed to delete image: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while deleting the image.');
     });
 }
 

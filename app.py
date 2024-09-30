@@ -5,6 +5,7 @@ import threading
 import base64
 import datetime
 import credentials
+import logging
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory
 from paho.mqtt import client as mqtt_client
 import piexif
@@ -269,6 +270,39 @@ def delete_image(filename):
         flash("Image not found.", 'error')
 
     return redirect(url_for('gallery'))
+
+@app.route('/delete_image', methods=['POST'])
+def delete_image():
+    data = request.get_json()
+    filename = data.get('filename')
+    mode = data.get('mode', 'classify')  # 'classify' or 'gallery'
+
+    if not filename:
+        return jsonify({'success': False, 'message': 'Filename not provided.'}), 400
+
+    if mode == 'classify':
+        image_dir = STATIC_IMAGES_DIR
+    elif mode == 'gallery':
+        image_dir = DATASET_IMAGES_DIR
+    else:
+        return jsonify({'success': False, 'message': 'Invalid mode.'}), 400
+
+    image_path = os.path.join(image_dir, filename)
+
+    if not os.path.exists(image_path):
+        return jsonify({'success': False, 'message': 'Image not found.'}), 404
+
+    try:
+        os.remove(image_path)
+        logging.info(f"Deleted image: {image_path}")
+
+        # Optional: If you maintain a database or a list of images, update it here.
+
+        return jsonify({'success': True, 'message': 'Image deleted successfully.'})
+    except Exception as e:
+        logging.error(f"Error deleting image {image_path}: {e}")
+        return jsonify({'success': False, 'message': 'Failed to delete image.'}), 500
+
 
 @app.route('/image/<mode>/<filename>')
 def send_image(mode, filename):
