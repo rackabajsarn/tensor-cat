@@ -37,7 +37,8 @@ retraining_status = {
     'retraining': False,
     'error': None,
     'last_trained': None,
-    'images_used': 0
+    'images_used': 0,
+    'output': ""  # To capture retraining output
 }
 
 # Ensure directories exist
@@ -250,18 +251,19 @@ retrain_lock = threading.Lock()
 retraining = False
 
 def run_retraining():
-    global retraining
+    global retraining_status
     with retrain_lock:
-        app.logger.info("Starting retrain")
+        logging.info("Starting retrain")
         if retraining_status['retraining']:
-            app.logger.warning("Retraining is already in progress.")
+            logging.warning("Retraining is already in progress.")
             return
         retraining_status['retraining'] = True
         retraining_status['error'] = None  # Reset previous errors
+        retraining_status['output'] = ""    # Reset previous output
         update_model_info(retraining=True)
     
     try:
-        app.logger.info("Starting model retraining...")
+        logging.info("Starting model retraining...")
         
         # Path to the virtual environment's Python interpreter
         VENV_PATH = '/venv/coral'  # Adjust as per your virtual environment's path
@@ -269,27 +271,50 @@ def run_retraining():
         python_executable = os.path.join(VENV_PATH, 'bin', 'python')
         
         # Run the retraining script using the virtual environment's Python
-        result = subprocess.run(
+        process = subprocess.Popen(
             [python_executable, train_script_path],
-            capture_output=True,
-            text=True
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True  # To capture output as string
         )
+
+        logging.info("Starting retraining process...")
+        # Read the output in real-time
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                logging.info(line.strip())
+                retraining_status['output'] += line
+        process.stdout.close()
+        return_code = process.wait()
+
+        # Read any remaining stderr
+        stderr = process.stderr.read()
+        if stderr:
+            logging.error(stderr.strip())
+            retraining_status['output'] += stderr
+        process.stderr.close()
         
-        if result.returncode == 0:
+        if return_code == 0:
             retraining_status['last_trained'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             retraining_status['images_used'] = count_training_images()
             update_model_info(last_trained=retraining_status['last_trained'],
                               images_used=retraining_status['images_used'],
                               retraining=False)  # Update persistent state
-            app.logger.info("Model retraining completed successfully.")
+            logging.info("Model retraining completed successfully.")
+        else:
+            # On failure
+            error_message = f"Retraining failed with return code: {return_code}"
+            logging.error(error_message)
+            retraining_status['error'] = error_message
+            update_model_info(retraining=False)
     
     except Exception as e:
-        app.logger.error(f"An error occurred during retraining: {e}")
+        logging.error(f"An error occurred during retraining: {e}")
         retraining_status['error'] = str(e)
         update_model_info(retraining=False)
     
     finally:
-        retraining = False
+        retraining_status['retraining'] = False
 
 
 
@@ -300,7 +325,7 @@ def count_training_images():
         return 0
     image_files = [f for f in os.listdir(DATASET_IMAGES_DIR) if f.lower().endswith(supported_extensions)]
     images_count = len(image_files)
-    app.logger.info(f"Number of images used for training: {images_count}")
+    logging.info(f"Number of images used for training: {images_count}")
     return images_count
 
 def count_current_dataset_images():
