@@ -36,25 +36,4 @@
         {% endif %}
     {% endwith %}
 </div>
-    <!-- AJAX to periodically fetch retraining status -->
-    <script>
-        function fetchStatus() {
-            $.getJSON("{{ url_for('status') }}", function(data) {
-                $("#retraining-status").text(data.retraining);
-                if(data.error) {
-                    // Display error message
-                    if($("#error-message").length === 0){
-                        $("body").append("<p id='error-message' style='color:red;'>Error: " + data.error + "</p>");
-                    } else {
-                        $("#error-message").text("Error: " + data.error);
-                    }
-                } else {
-                    $("#error-message").remove();
-                }
-            });
-        }
-        
-        // Fetch status every 5 seconds
-        setInterval(fetchStatus, 5000);
-    </script>
 {% endblock %}
