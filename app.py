@@ -57,14 +57,26 @@ log.setLevel(logging.WARNING)  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
 
 logging.info('Application started.')
 
-# Load the Edge TPU model
-print("Loading the Edge TPU model...")
-model_path = os.path.join(MODEL_DIR, MODEL_NAME)
-interpreter = make_interpreter(model_path)
-interpreter.allocate_tensors()
+# Initialize global interpreter and a lock for thread safety
+interpreter = None
+model_lock = threading.Lock()
 
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
+def load_model():
+    global interpreter
+    model_path = os.path.join(MODEL_DIR, MODEL_NAME)
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model file not found at {model_path}")
+    
+    with model_lock:
+        if interpreter:
+            del interpreter  # Clean up the existing interpreter
+        print("Loading the Edge TPU model...")
+        interpreter = make_interpreter(model_path)
+        interpreter.allocate_tensors()
+        print("Model loaded successfully.")
+
+# Initial model loading at startup
+load_model()
 
 # Classes mapping
 CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
@@ -231,16 +243,19 @@ def classify_image(image_path):
 
         # Add batch dimension
         image = np.expand_dims(image, axis=0)
+        
+        with model_lock:
+            if not interpreter:
+                return jsonify({'success': False, 'message': 'Model not loaded.'}), 500
+            # Set the input tensor
+            set_input(interpreter, image)
 
-        # Set the input tensor
-        set_input(interpreter, image)
+            # Run inference
+            interpreter.invoke()
 
-        # Run inference
-        interpreter.invoke()
-
-        # Get the results
-        results = get_classes(interpreter, top_k=1)
-        predicted_class = results[0].id  # Get the class index
+            # Get the results
+            results = get_classes(interpreter, top_k=1)
+            predicted_class = results[0].id  # Get the class index
 
         return predicted_class
     except Exception as e:
@@ -303,6 +318,7 @@ def run_retraining():
                               images_used=retraining_status['images_used'],
                               retraining=False)  # Update persistent state
             logging.info("Model retraining completed successfully.")
+            load_model()
         else:
             # On failure
             error_message = f"Retraining failed with return code: {return_code}"
