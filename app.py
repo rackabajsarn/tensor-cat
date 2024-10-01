@@ -251,7 +251,7 @@ def run_retraining():
     try:
         app.logger.info("Starting model retraining...")
         # Retraining logic
-        result = subprocess.run(['python', 'train_model.py'], capture_output=True, text=True)
+        result = subprocess.run(['/venv/coral/bin/python', 'train_model.py'], capture_output=True, text=True)
         
         if result.returncode == 0:
             app.logger.info("Model retraining completed successfully.")
