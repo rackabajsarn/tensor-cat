@@ -259,7 +259,11 @@ def run_retraining():
         python_executable = os.path.join(VENV_PATH, 'bin', 'python')
         
         # Run the retraining script using the virtual environment's Python
-        result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True)
+        result = subprocess.run(
+            [python_executable, train_script_path],
+            capture_output=True,
+            text=True
+        )
         
         if result.returncode == 0:
             app.logger.info("Model retraining completed successfully.")
