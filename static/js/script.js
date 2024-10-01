@@ -32,17 +32,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Filter Buttons
     const filterButtons = document.querySelectorAll('.filter-button');
-    const allButton = document.querySelector('.filter-button[data-filter="all"]');
 
     filterButtons.forEach(button => {
         button.addEventListener('click', () => {
-            if (button === allButton) {
-                handleAllButtonClick();
+            const filter = button.getAttribute('data-filter');
+
+            if (filter === 'all') {
+                // If 'All' is clicked
+                // Remove 'active' class from other buttons
+                filterButtons.forEach(btn => {
+                    if (btn.getAttribute('data-filter') !== 'all') {
+                        btn.classList.remove('active');
+                    }
+                });
+                // Activate 'All' button
+                button.classList.add('active');
             } else {
-                handleFilterButtonClick(button);
+                // Toggle 'active' on the clicked button
+                button.classList.toggle('active');
+                // Remove 'active' from 'All' button
+                const allButton = document.querySelector('.filter-button[data-filter="all"]');
+                allButton.classList.remove('active');
             }
+
+            // If no filters are active, activate 'All' button
+            const activeFilters = Array.from(filterButtons)
+                .filter(btn => btn.classList.contains('active') && btn.getAttribute('data-filter') !== 'all');
+
+            if (activeFilters.length === 0) {
+                const allButton = document.querySelector('.filter-button[data-filter="all"]');
+                allButton.classList.add('active');
+            }
+
+            // Call the filterImages function
+            filterImages();
         });
     });
+    
 });
 
 // Function to toggle label
@@ -176,74 +202,28 @@ window.onclick = function(event) {
     }
 }
 
-// Function to handle "All" button click
-function handleAllButtonClick() {
-    const filterButtons = document.querySelectorAll('.filter-button');
-    const allButton = document.querySelector('.filter-button[data-filter="all"]');
-
-    if (allButton.classList.contains('active')) {
-        // "All" is already active; do nothing
-        return;
-    }
-
-    // Deactivate all other filters
-    filterButtons.forEach(btn => {
-        if (btn !== allButton) {
-            btn.classList.remove('active');
-        }
-    });
-
-    // Activate "All"
-    allButton.classList.add('active');
-
-    // Show all images
-    filterImages([]);
-}
-
-// Function to handle individual filter button clicks
-function handleFilterButtonClick(button) {
-    const allButton = document.querySelector('.filter-button[data-filter="all"]');
-
-    // Toggle the clicked filter
-    button.classList.toggle('active');
-
-    // If any filter is active, deactivate "All"
-    if (button.classList.contains('active')) {
-        allButton.classList.remove('active');
-    }
-
-    // Collect all active filters
+// Function to filter images based on selected labels
+function filterImages() {
+    const imageItems = document.querySelectorAll('.image-item');
     const activeFilters = Array.from(document.querySelectorAll('.filter-button.active'))
-        .filter(btn => btn.getAttribute('data-filter') !== 'all')
-        .map(btn => btn.getAttribute('data-filter'));
+        .map(btn => btn.getAttribute('data-filter'))
+        .filter(filter => filter !== 'all');
 
     if (activeFilters.length === 0) {
-        // No filters active; activate "All"
-        allButton.classList.add('active');
-        filterImages([]);
-    } else {
-        filterImages(activeFilters);
-    }
-}
-
-// Function to filter images based on active filters
-function filterImages(activeFilters) {
-    const imageItems = document.querySelectorAll('.image-item');
-
-    imageItems.forEach(item => {
-        if (activeFilters.length === 0) {
-            // No filters; show all
+        // No filters active, show all images
+        imageItems.forEach(item => {
             item.classList.remove('hide');
-        } else {
-            // Show image if it matches any active filter
-            const matches = activeFilters.some(filter => {
-                return item.getAttribute(`data-${filter}`) === 'yes';
-            });
-            if (matches) {
+        });
+    } else {
+        imageItems.forEach(item => {
+            // Check if the item matches all active filters
+            const matchesAll = activeFilters.every(filter => item.getAttribute(`data-${filter}`) === 'yes');
+
+            if (matchesAll) {
                 item.classList.remove('hide');
             } else {
                 item.classList.add('hide');
             }
-        }
-    });
+        });
+    }
 }
