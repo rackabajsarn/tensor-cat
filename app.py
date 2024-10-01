@@ -1,17 +1,19 @@
-# app.py
-
 import os
 import threading
 import base64
 import datetime
 import credentials
 import logging
+import json
+import shutil
+import numpy as np
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory
 from paho.mqtt import client as mqtt_client
 import piexif
 from PIL import Image
-import json
-import shutil
+from pycoral.utils.edgetpu import make_interpreter
+from pycoral.adapters.common import set_input
+from pycoral.adapters.classify import get_classes
 
 app = Flask(__name__)
 app.secret_key = credentials.SECRET_KEY
@@ -24,6 +26,8 @@ MQTT_TOPIC = 'catflap/image'
 # Directories
 STATIC_IMAGES_DIR = 'static/images'
 DATASET_IMAGES_DIR = 'dataset/images'
+MODEL_DIR = 'model'
+MODEL_NAME = 'my_model_quant_edgetpu.tflite'
 
 # Ensure directories exist
 os.makedirs(STATIC_IMAGES_DIR, exist_ok=True)
@@ -35,9 +39,20 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s:%(message)s'
 )
 
-logging.info('This is an informational message.')
-logging.error('This is an error message.')
+logging.info('Application started.')
 
+# Load the Edge TPU model
+print("Loading the Edge TPU model...")
+model_path = os.path.join(MODEL_DIR, MODEL_NAME)
+interpreter = make_interpreter(model_path)
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# Classes mapping
+CLASSES = ['not_cat', 'cat_entering', 'cat_leaving', 'prey']
+IMG_SIZE = (224, 224)
 
 # MQTT Client
 initial_connection = True
@@ -78,18 +93,38 @@ def mqtt_on_message(client, userdata, msg):
 
         print(f"Image saved to {image_path}")
 
-        # Initialize labels in EXIF data if not present
+        # Classify the image
+        predicted_class = classify_image(image_path)
+        predicted_label = CLASSES[predicted_class]
+
+        # Set initial EXIF tags based on prediction
         labels = {
             "cat": False,
             "morris": False,
             "entering": False,
             "prey": False
         }
+
+        if predicted_label == 'not_cat':
+            labels['cat'] = False
+        elif predicted_label == 'cat_entering':
+            labels['cat'] = True
+            labels['entering'] = True
+        elif predicted_label == 'cat_leaving':
+            labels['cat'] = True
+            labels['entering'] = False
+        elif predicted_label == 'prey':
+            labels['cat'] = True
+            labels['prey'] = True
+
+        # Write labels to EXIF
         write_labels(image_path, labels)
+
+        print(f"Image classified as {predicted_label} and labels updated.")
 
     except Exception as e:
         print(f"Error processing message: {e}")
-
+        logging.error(f"Error processing message: {e}")
 
 def mqtt_listen():
     client = mqtt_client.Client()
@@ -146,7 +181,7 @@ def write_labels(image_path, labels):
         else:
             # No EXIF data present
             exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
-        #exif_dict = piexif.load(img.info.get('exif', b''))
+
         description = json.dumps(labels)
         exif_dict['0th'][piexif.ImageIFD.ImageDescription] = description.encode('utf-8')
         exif_bytes = piexif.dump(exif_dict)
@@ -156,25 +191,30 @@ def write_labels(image_path, labels):
         print(f"Error writing labels to {image_path}: {e}")
         return False
 
-def send_mqtt_message(message):
+def classify_image(image_path):
     try:
-        client = mqtt_client.Client()
-        client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        client.publish(MQTT_TOPIC, message)
-        client.disconnect()
-        print(f"Sent MQTT message: {message}")
-    except Exception as e:
-        print(f"Error sending MQTT message: {e}")
+        # Preprocess the image
+        image = Image.open(image_path).convert('RGB').resize(IMG_SIZE)
+        image = np.array(image).astype(np.uint8)
 
-# Make read_labels available to templates
-@app.context_processor
-def utility_processor():
-    def get_labels(image_filename):
-        image_path = os.path.join(DATASET_IMAGES_DIR, image_filename)
-        if not os.path.exists(image_path):
-            image_path = os.path.join(STATIC_IMAGES_DIR, image_filename)
-        return read_labels(image_path)
-    return dict(read_labels=get_labels)
+        # Add batch dimension
+        image = np.expand_dims(image, axis=0)
+
+        # Set the input tensor
+        set_input(interpreter, image)
+
+        # Run inference
+        interpreter.invoke()
+
+        # Get the results
+        results = get_classes(interpreter, top_k=1)
+        predicted_class = results[0].id  # Get the class index
+
+        return predicted_class
+    except Exception as e:
+        print(f"Error classifying image {image_path}: {e}")
+        logging.error(f"Error classifying image {image_path}: {e}")
+        return 0  # Default to 'not_cat' in case of error
 
 # Flask Routes
 
@@ -230,21 +270,7 @@ def update_label():
         try:
             logging.debug("Attempting to move the image.")
             shutil.move(image_path, dest_path)
-            logging.debug("Image moved successfully to {dest_path}.")
-
-            # # Send MQTT message based on labels
-            # labels = read_labels(dest_path)
-            # # Determine MQTT message based on the updated labels
-            # if labels['cat']:
-            #     if labels['entering']:
-            #         if labels['prey']:
-            #             send_mqtt_message("prey")
-            #         else:
-            #             send_mqtt_message("entering")
-            #     else:
-            #         send_mqtt_message("leaving")
-            # else:
-            #     send_mqtt_message("not_cat")
+            logging.debug(f"Image moved successfully to {dest_path}.")
 
             return jsonify({'success': True, 'message': 'Image saved and moved.'})
         except Exception as e:
@@ -293,13 +319,10 @@ def delete_image():
         os.remove(image_path)
         logging.info(f"Deleted image: {image_path}")
 
-        # Optional: If you maintain a database or a list of images, update it here.
-
         return jsonify({'success': True, 'message': 'Image deleted successfully.'})
     except Exception as e:
         logging.error(f"Error deleting image {image_path}: {e}")
         return jsonify({'success': False, 'message': 'Failed to delete image.'}), 500
-
 
 @app.route('/image/<mode>/<filename>')
 def send_image(mode, filename):
@@ -313,6 +336,16 @@ def send_image(mode, filename):
 @app.route('/about')
 def about():
     return render_template('about.html', mode='about')
+
+# Make read_labels available to templates
+@app.context_processor
+def utility_processor():
+    def get_labels(image_filename):
+        image_path = os.path.join(DATASET_IMAGES_DIR, image_filename)
+        if not os.path.exists(image_path):
+            image_path = os.path.join(STATIC_IMAGES_DIR, image_filename)
+        return read_labels(image_path)
+    return dict(read_labels=get_labels)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
