@@ -205,7 +205,6 @@ body.dark-theme {
     transform: translateX(-50%);
     display: flex;
     gap: 10px;
-    flex-wrap: wrap;
 }
 
 .overlay-buttons .label-button {
@@ -307,9 +306,9 @@ body.dark-theme {
     }
 }
 
-@media (max-width: 300px) {
+@media (max-width: 600px) {
     .nav-bar a {
-        float: none;
+        float: left;
         display: block;
         text-align: left;
     }
