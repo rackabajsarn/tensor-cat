@@ -142,6 +142,7 @@ def mqtt_on_message(client, userdata, msg):
             labels['morris'] = True
             labels['entering'] = True
             client.publish('catflap/cat_location', 'Home')
+            client.publish('catflap/command', 'open')
         elif predicted_label == 'cat_morris_leaving':
             labels['cat'] = True
             labels['morris'] = True
@@ -152,6 +153,7 @@ def mqtt_on_message(client, userdata, msg):
             labels['morris'] = True
             labels['prey'] = True
             client.publish('catflap/alert', 'Prey Detected')
+            client.publish('catflap/command', 'close')
         elif predicted_label == 'unknown_cat_entering':
             labels['cat'] = True
             labels['morris'] = False
