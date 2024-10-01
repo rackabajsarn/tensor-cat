@@ -228,6 +228,46 @@ function filterImages() {
     }
 }
 
+document.addEventListener('DOMContentLoaded', function () {
+    const themeToggle = document.getElementById('theme-toggle');
+
+    // Function to apply the theme
+    function applyTheme(theme) {
+        if (theme === 'dark') {
+            document.body.classList.add('dark-theme');
+            document.getElementById('navbar').classList.add('dark-theme');
+            // Update other components if needed
+        } else {
+            document.body.classList.remove('dark-theme');
+            document.getElementById('navbar').classList.remove('dark-theme');
+            // Update other components if needed
+        }
+    }
+
+    // Check Local Storage for theme preference
+    let savedTheme = localStorage.getItem('theme');
+    if (!savedTheme) {
+        // Detect system preference
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        savedTheme = prefersDark ? 'dark' : 'light';
+    }
+    applyTheme(savedTheme);
+    if (savedTheme === 'dark') {
+        themeToggle.checked = true;
+    }
+
+    // Event listener for theme toggle switch
+    themeToggle.addEventListener('change', function () {
+        if (this.checked) {
+            applyTheme('dark');
+            localStorage.setItem('theme', 'dark');
+        } else {
+            applyTheme('light');
+            localStorage.setItem('theme', 'light');
+        }
+    });
+});
+
 $(document).ready(function() {
     // Function to fetch retraining status
     function fetchRetrainingStatus() {
@@ -258,7 +298,7 @@ $(document).ready(function() {
                 } else {
                     $('button[type="submit"]').attr('disabled', false).text('Start Retraining');
                 }
-                
+
                 // Update retraining output
                 $("#retraining-output").text(data.output);
                 // Auto-scroll to the bottom
