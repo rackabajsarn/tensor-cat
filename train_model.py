@@ -15,7 +15,7 @@ MODEL_NAME = 'my_model_quant'
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 # Classes
-CLASSES = ['not_cat', 'cat_entering', 'cat_leaving', 'prey']
+CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
 EPOCHS = 10
