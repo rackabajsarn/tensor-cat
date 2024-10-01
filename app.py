@@ -124,27 +124,27 @@ def mqtt_on_message(client, userdata, msg):
         if predicted_label == 'not_cat':
             labels['cat'] = False
             client.publish('catflap/debug', 'Empty picture received')
-            logging.warning('Empty picture`received?')
+            logging.warning('Empty picture received?')
         elif predicted_label == 'cat_morris_entering':
             labels['cat'] = True
             labels['morris'] = True
             labels['entering'] = True
-            client.publish('catflap/cat_location', True)
+            client.publish('catflap/cat_location', 'Home')
         elif predicted_label == 'cat_morris_leaving':
             labels['cat'] = True
             labels['morris'] = True
             labels['entering'] = False
-            client.publish('catflap/cat_location', False)
+            client.publish('catflap/cat_location', 'Away')
         elif predicted_label == 'prey':
             labels['cat'] = True
             labels['morris'] = True
             labels['prey'] = True
-            client.publish('catflap/prey_alert', True)
+            client.publish('catflap/alert', 'Prey')
         elif predicted_label == 'unknown_cat_entering':
             labels['cat'] = True
             labels['morris'] = False
             labels['entering'] = True
-            client.publish('catflap/debug', 'Peekaboo')
+            client.publish('catflap/alert', 'Peekaboo')
 
         # Write labels to EXIF
         write_labels(image_path, labels)
