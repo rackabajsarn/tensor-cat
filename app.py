@@ -66,7 +66,7 @@ input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
 # Classes mapping
-CLASSES = ['not_cat', 'cat_entering', 'cat_leaving', 'prey']
+CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
 IMG_SIZE = (224, 224)
 
 # MQTT Client
@@ -252,6 +252,7 @@ retraining = False
 def run_retraining():
     global retraining
     with retrain_lock:
+        app.logger.info("Starting retrain")
         if retraining_status['retraining']:
             app.logger.warning("Retraining is already in progress.")
             return
