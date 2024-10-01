@@ -39,6 +39,10 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s:%(message)s'
 )
 
+# Suppress Werkzeug logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.WARNING)  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+
 logging.info('Application started.')
 
 # Load the Edge TPU model
