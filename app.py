@@ -29,6 +29,16 @@ DATASET_IMAGES_DIR = 'dataset/images'
 os.makedirs(STATIC_IMAGES_DIR, exist_ok=True)
 os.makedirs(DATASET_IMAGES_DIR, exist_ok=True)
 
+logging.basicConfig(
+    filename='/home/tensor-cat/logs/app.log',
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s:%(message)s'
+)
+
+logging.info('This is an informational message.')
+logging.error('This is an error message.')
+
+
 # MQTT Client
 initial_connection = True
 
@@ -218,26 +228,28 @@ def update_label():
         # Move the image to dataset directory
         dest_path = os.path.join(DATASET_IMAGES_DIR, filename)
         try:
+            logging.debug("Attempting to move the image.")
             shutil.move(image_path, dest_path)
-            print(f"Moved image to {dest_path}")
+            logging.debug("Image moved successfully to {dest_path}.")
 
-            # Send MQTT message based on labels
-            labels = read_labels(dest_path)
-            # Determine MQTT message based on the updated labels
-            if labels['cat']:
-                if labels['entering']:
-                    if labels['prey']:
-                        send_mqtt_message("prey")
-                    else:
-                        send_mqtt_message("entering")
-                else:
-                    send_mqtt_message("leaving")
-            else:
-                send_mqtt_message("not_cat")
+            # # Send MQTT message based on labels
+            # labels = read_labels(dest_path)
+            # # Determine MQTT message based on the updated labels
+            # if labels['cat']:
+            #     if labels['entering']:
+            #         if labels['prey']:
+            #             send_mqtt_message("prey")
+            #         else:
+            #             send_mqtt_message("entering")
+            #     else:
+            #         send_mqtt_message("leaving")
+            # else:
+            #     send_mqtt_message("not_cat")
 
             return jsonify({'success': True, 'message': 'Image saved and moved.'})
         except Exception as e:
             print(f"Error moving image: {e}")
+            logging.error(f"Failed to move image: {e}")
             return jsonify({'success': False, 'message': 'Failed to move image.'}), 500
 
     elif action == 'back':
