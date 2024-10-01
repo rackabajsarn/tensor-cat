@@ -149,7 +149,7 @@ if __name__ == '__main__':
     # Save the model
     model_save_path = os.path.join(MODEL_DIR, 'my_model')
     print(f"Saving the model to {model_save_path}...")
-    model.save(model_save_path)
+    model.export(model_save_path)
 
     # Convert and quantize the model
     print("Converting and quantizing the model...")
