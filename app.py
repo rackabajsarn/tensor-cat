@@ -6,6 +6,8 @@ import credentials
 import logging
 import json
 import shutil
+import time
+import subprocess
 import numpy as np
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory
 from paho.mqtt import client as mqtt_client
@@ -28,6 +30,7 @@ STATIC_IMAGES_DIR = 'static/images'
 DATASET_IMAGES_DIR = 'dataset/images'
 MODEL_DIR = 'model'
 MODEL_NAME = 'my_model_quant_edgetpu.tflite'
+MODEL_INFO_PATH = 'model_info.json'
 
 # Ensure directories exist
 os.makedirs(STATIC_IMAGES_DIR, exist_ok=True)
@@ -111,15 +114,28 @@ def mqtt_on_message(client, userdata, msg):
 
         if predicted_label == 'not_cat':
             labels['cat'] = False
-        elif predicted_label == 'cat_entering':
+            client.publish('catflap/debug', 'Empty picture received')
+            logging.warning('Empty picture`received?')
+        elif predicted_label == 'cat_morris_entering':
             labels['cat'] = True
+            labels['morris'] = True
             labels['entering'] = True
-        elif predicted_label == 'cat_leaving':
+            client.publish('catflap/cat_location', True)
+        elif predicted_label == 'cat_morris_leaving':
             labels['cat'] = True
+            labels['morris'] = True
             labels['entering'] = False
+            client.publish('catflap/cat_location', False)
         elif predicted_label == 'prey':
             labels['cat'] = True
+            labels['morris'] = True
             labels['prey'] = True
+            client.publish('catflap/prey_alert', True)
+        elif predicted_label == 'unknown_cat_entering':
+            labels['cat'] = True
+            labels['morris'] = False
+            labels['entering'] = True
+            client.publish('catflap/debug', 'Peekaboo')
 
         # Write labels to EXIF
         write_labels(image_path, labels)
@@ -220,6 +236,97 @@ def classify_image(image_path):
         print(f"Error classifying image {image_path}: {e}")
         logging.error(f"Error classifying image {image_path}: {e}")
         return 0  # Default to 'not_cat' in case of error
+
+retrain_lock = threading.Lock()
+
+retraining = False
+
+def run_retraining():
+    global retraining
+    with retrain_lock:
+        if retraining:
+            app.logger.warning("Retraining is already in progress.")
+            return
+        retraining = True
+    try:
+        app.logger.info("Starting model retraining...")
+        # Retraining logic
+        result = subprocess.run(['python', 'train_model.py'], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            app.logger.info("Model retraining completed successfully.")
+            # Count the number of images used for training
+            images_used = count_training_images()
+            
+            # Update model_info.json with the current timestamp and images used
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            update_model_info(last_trained=now, images_used=images_used)
+            
+            flash('Model retraining completed successfully!', 'success')
+        else:
+            app.logger.error(f"Model retraining failed: {result.stderr}")
+            flash(f"Model retraining failed: {result.stderr}", 'danger')
+    except Exception as e:
+        app.logger.error(f"An error occurred during retraining: {e}")
+        flash(f"An error occurred during retraining: {e}", 'danger')
+    finally:
+        retraining = False
+
+def count_training_images():
+    supported_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')  # Add or remove as needed
+    if not os.path.isdir(DATASET_IMAGES_DIR):
+        app.logger.warning(f"Dataset directory '{DATASET_IMAGES_DIR}' does not exist.")
+        return 0
+    image_files = [f for f in os.listdir(DATASET_IMAGES_DIR) if f.lower().endswith(supported_extensions)]
+    images_count = len(image_files)
+    app.logger.info(f"Number of images used for training: {images_count}")
+    return images_count
+
+def count_current_dataset_images():
+    supported_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')  # Add or remove as needed
+    if not os.path.isdir(DATASET_IMAGES_DIR):
+        app.logger.warning(f"Dataset directory '{DATASET_IMAGES_DIR}' does not exist.")
+        return 0
+    image_files = [f for f in os.listdir(DATASET_IMAGES_DIR) if f.lower().endswith(supported_extensions)]
+    current_count = len(image_files)
+    app.logger.info(f"Current number of images in dataset: {current_count}")
+    return current_count
+
+
+def get_last_trained():
+    try:
+        with open(MODEL_INFO_PATH, 'r') as f:
+            data = json.load(f)
+            return data.get('last_trained', 'Never')
+    except FileNotFoundError:
+        return 'Never'
+    except json.JSONDecodeError:
+        return 'Never'
+
+def update_last_trained():
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data = {"last_trained": now}
+    with open(MODEL_INFO_PATH, 'w') as f:
+        json.dump(data, f)
+
+def get_model_info():
+    try:
+        with open(MODEL_INFO_PATH, 'r') as f:
+            data = json.load(f)
+            return data
+    except FileNotFoundError:
+        return {"last_trained": "Never", "images_used": 0}
+    except json.JSONDecodeError:
+        return {"last_trained": "Never", "images_used": 0}
+
+def update_model_info(last_trained=None, images_used=None):
+    data = get_model_info()
+    if last_trained:
+        data['last_trained'] = last_trained
+    if images_used is not None:
+        data['images_used'] = images_used
+    with open(MODEL_INFO_PATH, 'w') as f:
+        json.dump(data, f, indent=4)
 
 # Flask Routes
 
@@ -340,7 +447,27 @@ def send_image(mode, filename):
 
 @app.route('/about')
 def about():
-    return render_template('about.html', mode='about')
+    model_info = get_model_info()
+    last_trained = model_info.get('last_trained', 'Never')
+    images_used = model_info.get('images_used', 0)
+    current_dataset_images = count_current_dataset_images()
+    return render_template('about.html', last_trained=last_trained, images_used=images_used, current_dataset_images=current_dataset_images)
+
+
+@app.route('/retrain', methods=['POST'])
+def retrain_model():
+    global retraining
+    if retraining:
+        flash('Retraining is already in progress.', 'warning')
+        return redirect(url_for('about'))
+    
+    # Start retraining in a separate thread
+    retrain_thread = threading.Thread(target=run_retraining)
+    retrain_thread.start()
+    
+    flash('Retraining started successfully!', 'success')
+    return redirect(url_for('about'))
+
 
 # Make read_labels available to templates
 @app.context_processor
