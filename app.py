@@ -139,17 +139,19 @@ def mqtt_on_message(client, userdata, msg):
             labels['cat'] = True
             labels['morris'] = True
             labels['prey'] = True
-            client.publish('catflap/alert', 'Prey')
+            client.publish('catflap/alert', 'Prey Detected')
         elif predicted_label == 'unknown_cat_entering':
             labels['cat'] = True
             labels['morris'] = False
             labels['entering'] = True
-            client.publish('catflap/alert', 'Peekaboo')
+            client.publish('catflap/alert', 'Peekaboo!')
 
         # Write labels to EXIF
         write_labels(image_path, labels)
 
-        print(f"Image classified as {predicted_label} and labels updated.")
+        new_images = count_current_classify_images()
+        message = f"{new_images} New image to classify" if new_images < 2 else f"{new_images} New images to classify"
+        client.publish('catflap/alert', message)
         logging.info(f"Image classified as {predicted_label} and labels updated.")
 
     except Exception as e:
@@ -296,7 +298,7 @@ def run_retraining():
         
         if return_code == 0:
             retraining_status['last_trained'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            retraining_status['images_used'] = count_training_images()
+            retraining_status['images_used'] = count_current_dataset_images()
             update_model_info(last_trained=retraining_status['last_trained'],
                               images_used=retraining_status['images_used'],
                               retraining=False)  # Update persistent state
@@ -316,18 +318,6 @@ def run_retraining():
     finally:
         retraining_status['retraining'] = False
 
-
-
-def count_training_images():
-    supported_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')  # Add or remove as needed
-    if not os.path.isdir(DATASET_IMAGES_DIR):
-        app.logger.warning(f"Dataset directory '{DATASET_IMAGES_DIR}' does not exist.")
-        return 0
-    image_files = [f for f in os.listdir(DATASET_IMAGES_DIR) if f.lower().endswith(supported_extensions)]
-    images_count = len(image_files)
-    logging.info(f"Number of images used for training: {images_count}")
-    return images_count
-
 def count_current_dataset_images():
     supported_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')  # Add or remove as needed
     if not os.path.isdir(DATASET_IMAGES_DIR):
@@ -338,6 +328,14 @@ def count_current_dataset_images():
     app.logger.info(f"Current number of images in dataset: {current_count}")
     return current_count
 
+def count_current_classify_images():
+    supported_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')  # Add or remove as needed
+    if not os.path.isdir(STATIC_IMAGES_DIR):
+        app.logger.warning(f"Classification directory '{STATIC_IMAGES_DIR}' does not exist.")
+        return 0
+    image_files = [f for f in os.listdir(STATIC_IMAGES_DIR) if f.lower().endswith(supported_extensions)]
+    current_count = len(image_files)
+    return current_count
 
 def get_last_trained():
     try:
