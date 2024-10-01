@@ -342,12 +342,14 @@ def get_model_info():
     except json.JSONDecodeError:
         return {"last_trained": "Never", "images_used": 0}
 
-def update_model_info(last_trained=None, images_used=None):
+def update_model_info(last_trained=None, images_used=None, retraining=None):
     data = get_model_info()
     if last_trained:
         data['last_trained'] = last_trained
     if images_used is not None:
         data['images_used'] = images_used
+    if retraining is not None:
+        data['retraining'] = retraining
     with open(MODEL_INFO_PATH, 'w') as f:
         json.dump(data, f, indent=4)
 
