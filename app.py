@@ -32,6 +32,14 @@ MODEL_DIR = 'model'
 MODEL_NAME = 'my_model_quant_edgetpu.tflite'
 MODEL_INFO_PATH = 'model_info.json'
 
+# Shared state
+retraining_status = {
+    'retraining': False,
+    'error': None,
+    'last_trained': None,
+    'images_used': 0
+}
+
 # Ensure directories exist
 os.makedirs(STATIC_IMAGES_DIR, exist_ok=True)
 os.makedirs(DATASET_IMAGES_DIR, exist_ok=True)
@@ -244,11 +252,12 @@ retraining = False
 def run_retraining():
     global retraining
     with retrain_lock:
-        if retraining:
+        if retraining_status['retraining']:
             app.logger.warning("Retraining is already in progress.")
             return
-        retraining = True
-        update_model_info(retraining=True)
+        retraining_status['retraining'] = True
+        retraining_status['error'] = None  # Reset previous errors
+        #update_model_info(retraining=True)
     
     try:
         app.logger.info("Starting model retraining...")
@@ -266,29 +275,21 @@ def run_retraining():
         )
         
         if result.returncode == 0:
+            retraining_status['last_trained'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            retraining_status['images_used'] = count_training_images()
             app.logger.info("Model retraining completed successfully.")
-            images_used = count_training_images()
-            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            update_model_info(last_trained=now, images_used=images_used, retraining=False)
-            
-            # Push application context to use 'flash'
-            with app.app_context():
-                flash('Model retraining completed successfully!', 'success')
+            #images_used = count_training_images()
+            #now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            #update_model_info(last_trained=now, images_used=images_used, retraining=False)
         else:
-            app.logger.error(f"Model retraining failed: {result.stderr}")
-            update_model_info(retraining=False)
-            
-            # Push application context to use 'flash'
-            with app.app_context():
-                flash(f"Model retraining failed: {result.stderr}", 'danger')
+            app.logger.error("Retraining failed with return code: {}".format(result.returncode))
+            retraining_status['error'] = 'model retraining failed.'
+            #update_model_info(retraining=False)
     
     except Exception as e:
         app.logger.error(f"An error occurred during retraining: {e}")
-        update_model_info(retraining=False)
-        
-        # Push application context to use 'flash'
-        with app.app_context():
-            flash(f"An error occurred during retraining: {e}", 'danger')
+        retraining_status['error'] = str(e)
+        #update_model_info(retraining=False)
     
     finally:
         retraining = False
@@ -362,7 +363,8 @@ def index():
 @app.route('/classify')
 def classify():
     images = get_image_list(STATIC_IMAGES_DIR)
-    return render_template('index.html', mode='classify', images=images)
+    return render_template('index.html', mode='classify', images=images, retraining_status=retraining_status)
+
 
 @app.route('/update_label', methods=['POST'])
 def update_label():
@@ -429,7 +431,7 @@ def update_label():
 @app.route('/gallery')
 def gallery():
     images = get_image_list(DATASET_IMAGES_DIR)
-    return render_template('gallery.html', mode='gallery', images=images)
+    return render_template('gallery.html', mode='gallery', images=images, retraining_status=retraining_status)
 
 @app.route('/delete_image', methods=['POST'])
 def delete_image():
@@ -476,23 +478,29 @@ def about():
     last_trained = model_info.get('last_trained', 'Never')
     images_used = model_info.get('images_used', 0)
     current_dataset_images = count_current_dataset_images()
-    return render_template('about.html', last_trained=last_trained, images_used=images_used, current_dataset_images=current_dataset_images)
-
+    return render_template('about.html', 
+                           last_trained=last_trained, 
+                           images_used=images_used, 
+                           current_dataset_images=current_dataset_images,
+                           retraining_status=retraining_status)
 
 @app.route('/retrain', methods=['POST'])
 def retrain_model():
-    global retraining
-    if retraining:
-        flash('Retraining is already in progress.', 'warning')
-        return redirect(url_for('about'))
-    
-    # Start retraining in a separate thread
-    retrain_thread = threading.Thread(target=run_retraining)
-    retrain_thread.start()
-    
+    with retrain_lock:
+        if retraining_status['retraining']:
+            flash('Retraining is already in progress.', 'warning')
+            return redirect(url_for('about'))
+        
+        # Start retraining in a separate thread
+        retrain_thread = threading.Thread(target=run_retraining)
+        retrain_thread.start()
+        
     flash('Retraining started successfully!', 'success')
     return redirect(url_for('about'))
 
+@app.route('/status')
+def status():
+    return jsonify(retraining_status)
 
 # Make read_labels available to templates
 @app.context_processor

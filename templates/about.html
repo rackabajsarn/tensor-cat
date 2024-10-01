@@ -8,26 +8,53 @@
     <p>Images are received via MQTT, stored in the <code>static/images</code> directory, and can be classified through the web interface.</p>
     <p>Once classified, images are moved to the <code>dataset/images</code> directory. You can also reclassify images from the gallery.</p>
 </div>
-<div style="padding: 20px;"></div>
+<div style="padding: 20px;">
     <div class="info">
         <p><strong>Last Model Training:</strong> {{ last_trained }}</p>
         <p><strong>Images Used for Training:</strong> {{ images_used }}</p>
         <p><strong>Current Number of Images in Dataset:</strong> {{ current_dataset_images }}</p>
     </div>
-        
+
+    <h2>Retraining Status:</h2>
+    <p>Retraining: <span id="retraining-status">{{ retraining_status.retraining }}</span></p>
+    {% if retraining_status.error %}
+        <p style="color:red;">Error: {{ retraining_status.error }}</p>
+    {% endif %}
+    
     <form action="{{ url_for('retrain_model') }}" method="post">
         <button type="submit">Retrain Model</button>
     </form>
 
     <!-- Optional: Display flash messages -->
     {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-        <ul>
-        {% for category, message in messages %}
-            <li class="{{ category }}">{{ message }}</li>
-        {% endfor %}
-        </ul>
-    {% endif %}
+        {% if messages %}
+            <ul>
+            {% for category, message in messages %}
+                <li class="{{ category }}">{{ message }}</li>
+            {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
 </div>
-{% endwith %}
+    <!-- AJAX to periodically fetch retraining status -->
+    <script>
+        function fetchStatus() {
+            $.getJSON("{{ url_for('status') }}", function(data) {
+                $("#retraining-status").text(data.retraining);
+                if(data.error) {
+                    // Display error message
+                    if($("#error-message").length === 0){
+                        $("body").append("<p id='error-message' style='color:red;'>Error: " + data.error + "</p>");
+                    } else {
+                        $("#error-message").text("Error: " + data.error);
+                    }
+                } else {
+                    $("#error-message").remove();
+                }
+            });
+        }
+        
+        // Fetch status every 5 seconds
+        setInterval(fetchStatus, 5000);
+    </script>
 {% endblock %}
