@@ -248,29 +248,48 @@ def run_retraining():
             app.logger.warning("Retraining is already in progress.")
             return
         retraining = True
+        update_model_info(retraining=True)
+    
     try:
         app.logger.info("Starting model retraining...")
-        # Retraining logic
+        
+        # Path to the virtual environment's Python interpreter
+        VENV_PATH = '/venv/coral'  # Adjust as per your virtual environment's path
+        train_script_path = os.path.join(os.getcwd(), 'train_model.py')  # Ensure correct path
+        python_executable = os.path.join(VENV_PATH, 'bin', 'python')
+        
+        # Run the retraining script using the virtual environment's Python
         result = subprocess.run(['python3', 'train_model.py'], capture_output=True, text=True)
         
         if result.returncode == 0:
             app.logger.info("Model retraining completed successfully.")
-            # Count the number of images used for training
             images_used = count_training_images()
+            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            update_model_info(last_trained=now, images_used=images_used, retraining=False)
             
-            # Update model_info.json with the current timestamp and images used
-            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            update_model_info(last_trained=now, images_used=images_used)
-            
-            flash('Model retraining completed successfully!', 'success')
+            # Push application context to use 'flash'
+            with app.app_context():
+                flash('Model retraining completed successfully!', 'success')
         else:
             app.logger.error(f"Model retraining failed: {result.stderr}")
-            flash(f"Model retraining failed: {result.stderr}", 'danger')
+            update_model_info(retraining=False)
+            
+            # Push application context to use 'flash'
+            with app.app_context():
+                flash(f"Model retraining failed: {result.stderr}", 'danger')
+    
     except Exception as e:
         app.logger.error(f"An error occurred during retraining: {e}")
-        flash(f"An error occurred during retraining: {e}", 'danger')
+        update_model_info(retraining=False)
+        
+        # Push application context to use 'flash'
+        with app.app_context():
+            flash(f"An error occurred during retraining: {e}", 'danger')
+    
     finally:
         retraining = False
+
+
 
 def count_training_images():
     supported_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')  # Add or remove as needed
