@@ -259,7 +259,7 @@ def run_retraining():
             images_used = count_training_images()
             
             # Update model_info.json with the current timestamp and images used
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             update_model_info(last_trained=now, images_used=images_used)
             
             flash('Model retraining completed successfully!', 'success')
