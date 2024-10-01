@@ -258,7 +258,7 @@ def run_retraining():
             return
         retraining_status['retraining'] = True
         retraining_status['error'] = None  # Reset previous errors
-        #update_model_info(retraining=True)
+        update_model_info(retraining=True)
     
     try:
         app.logger.info("Starting model retraining...")
@@ -278,19 +278,15 @@ def run_retraining():
         if result.returncode == 0:
             retraining_status['last_trained'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             retraining_status['images_used'] = count_training_images()
+            update_model_info(last_trained=retraining_status['last_trained'],
+                              images_used=retraining_status['images_used'],
+                              retraining=False)  # Update persistent state
             app.logger.info("Model retraining completed successfully.")
-            #images_used = count_training_images()
-            #now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            #update_model_info(last_trained=now, images_used=images_used, retraining=False)
-        else:
-            app.logger.error("Retraining failed with return code: {}".format(result.returncode))
-            retraining_status['error'] = 'model retraining failed.'
-            #update_model_info(retraining=False)
     
     except Exception as e:
         app.logger.error(f"An error occurred during retraining: {e}")
         retraining_status['error'] = str(e)
-        #update_model_info(retraining=False)
+        update_model_info(retraining=False)
     
     finally:
         retraining = False
@@ -345,15 +341,25 @@ def get_model_info():
         return {"last_trained": "Never", "images_used": 0}
 
 def update_model_info(last_trained=None, images_used=None, retraining=None):
-    data = get_model_info()
-    if last_trained:
+    try:
+        with open(MODEL_INFO_PATH, 'r') as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {"last_trained": "Never", "images_used": 0, "retraining": False}
+
+    if last_trained is not None:
         data['last_trained'] = last_trained
     if images_used is not None:
         data['images_used'] = images_used
     if retraining is not None:
         data['retraining'] = retraining
-    with open(MODEL_INFO_PATH, 'w') as f:
-        json.dump(data, f, indent=4)
+
+    try:
+        with open(MODEL_INFO_PATH, 'w') as f:
+            json.dump(data, f, indent=4)
+        logging.info("model_info.json updated successfully.")
+    except IOError as e:
+        logging.error(f"Failed to update model info: {e}")
 
 # Flask Routes
 

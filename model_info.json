@@ -1,4 +1,5 @@
 {
     "last_trained": "Never",
-    "images_used": 0
+    "images_used": 0,
+    "retraining": false
 }
