@@ -304,7 +304,7 @@ def get_last_trained():
         return 'Never'
 
 def update_last_trained():
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data = {"last_trained": now}
     with open(MODEL_INFO_PATH, 'w') as f:
         json.dump(data, f)
