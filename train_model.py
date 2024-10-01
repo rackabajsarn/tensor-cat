@@ -62,7 +62,8 @@ def convert_labels(labels_list):
                 else:
                     label = 'cat_morris_leaving'
             else:
-                label = 'unknown_cat_entering'
+                if labels['entering']:
+                    label = 'unknown_cat_entering'
         else:
             label = 'not_cat'
         labels_encoded.append(CLASSES.index(label))
