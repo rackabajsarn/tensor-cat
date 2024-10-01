@@ -258,6 +258,11 @@ $(document).ready(function() {
                 } else {
                     $('button[type="submit"]').attr('disabled', false).text('Start Retraining');
                 }
+                
+                // Update retraining output
+                $("#retraining-output").text(data.output);
+                // Auto-scroll to the bottom
+                $("#retraining-output").scrollTop($("#retraining-output")[0].scrollHeight);
             },
             error: function(xhr, status, error) {
                 console.error('Failed to fetch retraining status:', error);

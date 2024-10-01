@@ -20,6 +20,10 @@
     {% if retraining_status.error %}
         <p style="color:red;">Error: {{ retraining_status.error }}</p>
     {% endif %}
+    <h3>Retraining Output:</h3>
+    <pre id="retraining-output" style="background-color:#f4f4f4; padding:10px; border:1px solid #ddd; height:300px; overflow:auto;">
+    {{ retraining_status.output }}
+    </pre>
     
     <form action="{{ url_for('retrain_model') }}" method="post">
         <button type="submit">Retrain Model</button>
