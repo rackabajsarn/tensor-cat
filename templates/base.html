@@ -12,7 +12,12 @@
 </head>
 <body>
     <!-- Navigation Bar -->
-    <nav class="navbar navbar-expand-lg navbar-light bg-light" id="navbar">
+    <div class="nav-bar">
+        <a href="{{ url_for('classify') }}" class="{% if mode == 'classify' %}active{% endif %}">Classification</a>
+        <a href="{{ url_for('gallery') }}" class="{% if mode == 'gallery' %}active{% endif %}">Gallery</a>
+        <a href="{{ url_for('about') }}" class="{% if mode == 'about' %}active{% endif %}">About</a>
+    </div>
+    <!-- <nav class="navbar navbar-expand-lg navbar-light bg-light" id="navbar">
         <div class="container-fluid">
             <a class="navbar-brand" href="{{ url_for('index') }}">My Flask App</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" 
@@ -22,13 +27,14 @@
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('classify') }}">Classify</a>
+                        <a href="{{ url_for('classify') }}" class="{% if mode == 'classify' %}active{% endif %}">Classification</a>
+                        <a class="{% if mode == 'classify' %}active{%else%}nav-link{% endif %}" href="{{ url_for('classify') }}">Classify</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('gallery') }}">Gallery</a>
+                        <a class="{% if mode == 'gallery' %}active{%else%}nav-link{% endif %}" href="{{ url_for('gallery') }}">Gallery</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('about') }}">About</a>
+                        <a class="{% if mode == 'about' %}active{%else%}nav-link{% endif %}" href="{{ url_for('about') }}">About</a>
                     </li>
                     <li class="nav-item">
                         <!-- Theme Toggle Switch -->
@@ -40,7 +46,7 @@
                 </ul>
             </div>
         </div>
-    </nav>
+    </nav> -->
 
     <!-- Flash Messages -->
     {% with messages = get_flashed_messages(with_categories=true) %}
