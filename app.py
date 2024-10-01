@@ -121,6 +121,7 @@ def mqtt_on_message(client, userdata, msg):
         write_labels(image_path, labels)
 
         print(f"Image classified as {predicted_label} and labels updated.")
+        logging.info(f"Image classified as {predicted_label} and labels updated.")
 
     except Exception as e:
         print(f"Error processing message: {e}")
