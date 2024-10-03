@@ -96,6 +96,7 @@ def mqtt_on_connect(client, userdata, flags, rc):
 
 def mqtt_on_message(client, userdata, msg):
     global initial_connection
+    start = time.time()
     if initial_connection and msg.retain:
         # Ignore the retained message on initial connection
         print("Ignored retained message on initial connection.")
@@ -125,6 +126,8 @@ def mqtt_on_message(client, userdata, msg):
         predicted_class = classify_image(image_path)
         predicted_label = CLASSES[predicted_class]
 
+        end = time.time()
+        
         # Set initial EXIF tags based on prediction
         labels = {
             "cat": False,
@@ -162,7 +165,8 @@ def mqtt_on_message(client, userdata, msg):
 
         # Write labels to EXIF
         write_labels(image_path, labels)
-
+        
+        client.publish('catflap/debug', f"Inference done in {start - end}s")
         new_images = count_current_classify_images()
         message = f"{new_images} New image to classify" if new_images < 2 else f"{new_images} New images to classify"
         client.publish('catflap/alert', message)
