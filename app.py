@@ -166,7 +166,7 @@ def mqtt_on_message(client, userdata, msg):
         # Write labels to EXIF
         write_labels(image_path, labels)
         
-        client.publish('catflap/debug', f"Inference done in {int((end - start)*1000)} ms")
+        client.publish('catflap/debug', f"Inference ({predicted_label}) done in {int((end - start)*1000)} ms")
         new_images = count_current_classify_images()
         message = f"{new_images} New image to classify" if new_images < 2 else f"{new_images} New images to classify"
         client.publish('catflap/alert', message)
