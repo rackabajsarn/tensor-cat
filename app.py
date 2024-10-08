@@ -144,13 +144,13 @@ def mqtt_on_message(client, userdata, msg):
             labels['cat'] = True
             labels['morris'] = True
             labels['entering'] = True
-            client.publish('catflap/cat_location', 'Home')
+            client.publish('catflap/cat_location/set', 'ON')
             client.publish('catflap/flap_state/set', 'ON')
         elif predicted_label == 'cat_morris_leaving':
             labels['cat'] = True
             labels['morris'] = True
             labels['entering'] = False
-            client.publish('catflap/cat_location', 'Away')
+            client.publish('catflap/cat_location/set', 'OFF')
         elif predicted_label == 'prey':
             labels['cat'] = True
             labels['morris'] = True
