@@ -155,13 +155,13 @@ def mqtt_on_message(client, userdata, msg):
             labels['cat'] = True
             labels['morris'] = True
             labels['prey'] = True
-            client.publish('catflap/alert', 'Prey Detected')
+            client.publish('catflap/alert', json.dumps({"topic":"ALERT","message":"Morris har fångat mus!"}))
             client.publish('catflap/flap_state/set', 'OFF')
         elif predicted_label == 'unknown_cat_entering':
             labels['cat'] = True
             labels['morris'] = False
             labels['entering'] = True
-            client.publish('catflap/alert', 'Peekaboo!')
+            client.publish('catflap/alert', json.dumps({"topic":"INFO","message":"Peekaboo!"}))
 
         # Write labels to EXIF
         write_labels(image_path, labels)
