@@ -170,7 +170,7 @@ def mqtt_on_message(client, userdata, msg):
         new_images = count_current_classify_images()
         message = f"{new_images} New image to classify" if new_images < 2 else f"{new_images} New images to classify"
         message_json = {"topic":"INFO","message":message}
-        message_json = json.dump(message_json)
+        message_json = json.dumps(message_json)
         client.publish('catflap/alert', message_json)
         logging.info(f"Image classified as {predicted_label} and labels updated.")
 
