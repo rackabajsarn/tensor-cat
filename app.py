@@ -139,6 +139,7 @@ def mqtt_on_message(client, userdata, msg):
         if predicted_label == 'not_cat':
             labels['cat'] = False
             client.publish('catflap/debug', 'Empty picture received')
+            client.publish('catflap/alert', json.dumps({"topic":"ALERT","message":"Konstig bild"}))
             logging.warning('Empty picture received?')
         elif predicted_label == 'cat_morris_entering':
             labels['cat'] = True
