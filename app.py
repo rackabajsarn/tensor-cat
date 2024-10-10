@@ -144,32 +144,29 @@ def mqtt_on_message(client, userdata, msg):
             labels['cat'] = True
             labels['morris'] = True
             labels['entering'] = True
-            client.publish('catflap/cat_location/set', 'ON')
-            client.publish('catflap/flap_state/set', 'ON')
         elif predicted_label == 'cat_morris_leaving':
             labels['cat'] = True
             labels['morris'] = True
             labels['entering'] = False
-            client.publish('catflap/cat_location/set', 'OFF')
         elif predicted_label == 'prey':
             labels['cat'] = True
             labels['morris'] = True
             labels['prey'] = True
-            client.publish('catflap/alert', json.dumps({"topic":"ALERT","message":"Morris har fångat mus!"}))
-            client.publish('catflap/flap_state/set', 'OFF')
+            client.publish('catflap/alert', json.dumps({"topic":"ALERT","message":"Morris har fångat mus!","title":"PREY ALERT!"}))
         elif predicted_label == 'unknown_cat_entering':
             labels['cat'] = True
             labels['morris'] = False
             labels['entering'] = True
-            client.publish('catflap/alert', json.dumps({"topic":"INFO","message":"Peekaboo!"}))
+            # client.publish('catflap/alert', json.dumps({"topic":"INFO","message":"Peekaboo!"}))
 
+        client.publish('catflap/inference',predicted_label)
         # Write labels to EXIF
         write_labels(image_path, labels)
         
-        client.publish('catflap/debug', f"Inference ({predicted_label}) done in {int((end - start)*1000)} ms")
+        # client.publish('catflap/debug', f"Inference ({predicted_label}) done in {int((end - start)*1000)} ms")
         new_images = count_current_classify_images()
         message = f"{new_images} New image to classify" if new_images < 2 else f"{new_images} New images to classify"
-        message_json = {"topic":"INFO","message":message}
+        message_json = {"topic":"INFO","message":message,"title":f"{predicted_label} ({int((end - start)*1000)} ms)"}
         message_json = json.dumps(message_json)
         client.publish('catflap/alert', message_json)
         logging.info(f"Image classified as {predicted_label} and labels updated.")
