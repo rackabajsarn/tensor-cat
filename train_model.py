@@ -149,9 +149,9 @@ if __name__ == '__main__':
         base_model.trainable = True
 
         # Freeze all layers except the top N layers
-        fine_tune_at = 100  # Adjust this value based on your model
-        for layer in base_model.layers[:fine_tune_at]:
-            layer.trainable = False
+        #fine_tune_at = 100  # Adjust this value based on your model
+        #for layer in base_model.layers[:fine_tune_at]:
+        #    layer.trainable = False
 
         model.compile(optimizer=tf.keras.optimizers.Adam(1e-5),
                     loss='sparse_categorical_crossentropy',
