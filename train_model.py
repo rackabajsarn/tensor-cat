@@ -1,10 +1,13 @@
 import os
+# Disable CUDA
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import json
 import piexif
 import numpy as np
 from PIL import Image
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
+from tensorflow.keras import layers
 
 # Directories
 DATASET_IMAGES_DIR = 'dataset/images'
@@ -69,11 +72,18 @@ def convert_labels(labels_list):
         labels_encoded.append(CLASSES.index(label))
     return labels_encoded
 
+data_augmentation = tf.keras.Sequential([
+    layers.RandomBrightness(0.2),
+    layers.RandomContrast(0.2),
+    layers.GaussianNoise(0.1),
+])
+
 def preprocess_image(image_path, label):
     image = tf.io.read_file(image_path)
     image = tf.image.decode_jpeg(image, channels=3)
     image = tf.image.resize(image, IMG_SIZE)
     image = image / 255.0  # Normalize to [0,1]
+    image = data_augmentation(image)
     return image, label
 
 def representative_data_gen():
@@ -135,10 +145,17 @@ if __name__ == '__main__':
     # Fine-tune the model (optional)
     fine_tune = True
     if fine_tune:
+        # Unfreeze the top layers of the base model
         base_model.trainable = True
+
+        # Freeze all layers except the top N layers
+        fine_tune_at = 100  # Adjust this value based on your model
+        for layer in base_model.layers[:fine_tune_at]:
+            layer.trainable = False
+
         model.compile(optimizer=tf.keras.optimizers.Adam(1e-5),
-                      loss='sparse_categorical_crossentropy',
-                      metrics=['accuracy'])
+                    loss='sparse_categorical_crossentropy',
+                    metrics=['accuracy'])
         fine_tune_epochs = 5
         total_epochs = EPOCHS + fine_tune_epochs
 
@@ -149,6 +166,7 @@ if __name__ == '__main__':
             epochs=total_epochs,
             initial_epoch=history.epoch[-1]
         )
+
 
     # Save the model
     model_save_path = os.path.join(MODEL_DIR, 'my_model')
