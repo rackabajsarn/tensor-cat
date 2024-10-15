@@ -83,7 +83,7 @@ def preprocess_image(image_path, label):
     image = tf.image.decode_jpeg(image, channels=3)
     image = tf.image.resize(image, IMG_SIZE)
     image = image / 255.0  # Normalize to [0,1]
-    image = data_augmentation(image)
+    #image = data_augmentation(image)
     return image, label
 
 def representative_data_gen():
