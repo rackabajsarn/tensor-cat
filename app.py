@@ -108,9 +108,9 @@ def mqtt_on_message(client, userdata, msg):
 
     try:
         # Decode the Base64-encoded image
-        base64_data = msg.payload.decode('utf-8')
-        image_data = base64.b64decode(base64_data)
-
+        #base64_data = msg.payload.decode('utf-8')
+        #image_data = base64.b64decode(base64_data)
+        image_data = msg.payload;
         # Generate timestamped filename
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         image_filename = f"{timestamp}.jpg"
