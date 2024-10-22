@@ -187,7 +187,6 @@ body.dark-theme {
 .image-container {
     position: relative;
     width: 100%;
-    max-width: 80%;
     max-height: 80vh;
     margin: 0 auto;
 }
