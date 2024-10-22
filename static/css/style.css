@@ -187,13 +187,15 @@ body.dark-theme {
 .image-container {
     position: relative;
     width: 100%;
-    max-height: 80vh; /* Limit the height to prevent overflowing */
-    overflow: hidden;
+    max-width: 80%;
+    max-height: 80vh;
+    margin: 0 auto;
 }
 
 .modal-content img {
     width: 100%;
-    height: auto;
+    height: 100%;
+    object-fit: contain; /* Scales the image to fit within the container while maintaining aspect ratio */
     border-radius: 10px;
 }
 
