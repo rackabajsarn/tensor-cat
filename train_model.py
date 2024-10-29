@@ -159,18 +159,16 @@ if __name__ == '__main__':
         optimizer='adam',
         loss='sparse_categorical_crossentropy',
         metrics=[
-            tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
-            tf.keras.metrics.Precision(name='precision'),
-            tf.keras.metrics.Recall(name='recall')
+            tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy')
         ]
     )
 
-    # Define a custom callback to save the best model based on validation recall
+    # Define a custom callback to save the best model based on validation accuracy
     checkpoint_filepath = os.path.join(MODEL_DIR, 'best_model.keras')
     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_filepath,
         save_weights_only=False,  # Save the full model
-        monitor='val_recall',
+        monitor='val_accuracy',
         mode='max',
         save_best_only=True
     )
@@ -200,9 +198,7 @@ if __name__ == '__main__':
             optimizer=tf.keras.optimizers.Adam(1e-5),
             loss='sparse_categorical_crossentropy',
             metrics=[
-                tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
-                tf.keras.metrics.Precision(name='precision'),
-                tf.keras.metrics.Recall(name='recall')
+                tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy')
             ]
         )
 
@@ -211,7 +207,7 @@ if __name__ == '__main__':
         fine_tune_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=fine_tune_checkpoint_filepath,
             save_weights_only=False,  # Save the full model
-            monitor='val_recall',
+            monitor='val_accuracy',
             mode='max',
             save_best_only=True
         )
