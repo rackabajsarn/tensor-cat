@@ -251,8 +251,6 @@ if __name__ == '__main__':
         target_names=CLASSES,
         zero_division=0
     )
-    print("Classification Report:")
-    print(report)
 
     # Export the model
     model_save_path = os.path.join(MODEL_DIR, 'my_model')
@@ -282,3 +280,5 @@ if __name__ == '__main__':
     os.system(compile_command)
     edgetpu_compiled_model = os.path.join(MODEL_DIR, f'{MODEL_NAME}_edgetpu.tflite')
     print(f"Edge TPU model saved to {edgetpu_compiled_model}")
+    print("Classification Report:")
+    print(report)
