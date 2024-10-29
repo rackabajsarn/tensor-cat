@@ -165,11 +165,11 @@ if __name__ == '__main__':
         ]
     )
 
-    # Define a custom callback to save the best weights based on validation recall
+    # Define a custom callback to save the best model based on validation recall
     checkpoint_filepath = os.path.join(MODEL_DIR, 'best_model.keras')
     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_filepath,
-        save_weights_only=True,
+        save_weights_only=False,  # Save the full model
         monitor='val_recall',
         mode='max',
         save_best_only=True
@@ -210,7 +210,7 @@ if __name__ == '__main__':
         fine_tune_checkpoint_filepath = os.path.join(MODEL_DIR, 'best_model_fine_tuned.keras')
         fine_tune_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=fine_tune_checkpoint_filepath,
-            save_weights_only=True,
+            save_weights_only=False,  # Save the full model
             monitor='val_recall',
             mode='max',
             save_best_only=True
@@ -229,9 +229,9 @@ if __name__ == '__main__':
             callbacks=[fine_tune_checkpoint_callback]
         )
 
-    # Load the best weights from fine-tuning
-    print("Loading the best fine-tuned weights...")
-    model.load_weights(fine_tune_checkpoint_filepath)
+    # Load the best model from fine-tuning
+    print("Loading the best fine-tuned model...")
+    model = tf.keras.models.load_model(fine_tune_checkpoint_filepath)
 
     # Evaluate the model on the validation set
     print("Evaluating the model...")
