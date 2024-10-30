@@ -323,20 +323,9 @@ if __name__ == '__main__':
     <html>
     <head>
         <title>Classification Report</title>
-        <style>
-            table {
-                border-collapse: collapse;
-                width: 50%;
-            }
-            th, td {
-                border: 1px solid #dddddd;
-                text-align: left;
-                padding: 8px;
-            }   
-        </style>
+        <link rel="stylesheet" type="text/css" href="/static/css/style.css">
     </head>
     <body>
-        <h1>Classification Report</h1>
         <table>
             <tr>
                 <th>Class</th>

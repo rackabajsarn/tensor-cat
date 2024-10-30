@@ -530,7 +530,7 @@ def model_performance():
     # Class names
     class_names = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
     
-    return render_template('model_performance.html', class_weights=class_weights, class_names=class_names)
+    return render_template('model_performance.html',mode='model_performance', class_weights=class_weights, class_names=class_names)
 
 
 @app.route('/about')
@@ -539,7 +539,8 @@ def about():
     last_trained = model_info.get('last_trained', 'Never')
     images_used = model_info.get('images_used', 0)
     current_dataset_images = count_current_dataset_images()
-    return render_template('about.html', 
+    return render_template('about.html',
+                           mode='about',
                            last_trained=last_trained, 
                            images_used=images_used, 
                            current_dataset_images=current_dataset_images,

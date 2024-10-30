@@ -54,6 +54,16 @@ body.dark-theme {
     color: #ffffff;
 }
 
+.table {
+    border-collapse: collapse;
+}
+
+th, td {
+    text-align: left;
+    padding: 8px;
+    color: white;
+}
+
 /* Flash Messages */
 .flashes {
     list-style-type: none;
