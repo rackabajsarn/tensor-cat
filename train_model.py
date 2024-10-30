@@ -325,7 +325,7 @@ if __name__ == '__main__':
         <title>Classification Report</title>
         <link rel="stylesheet" type="text/css" href="/static/css/style.css">
     </head>
-    <body>
+    <body class="dark-theme">
         <table>
             <tr>
                 <th>Class</th>
@@ -378,15 +378,31 @@ if __name__ == '__main__':
 
     # Generate and save the confusion matrix plot
     cm = confusion_matrix(val_labels_list, val_pred_labels)
+    # Optionally, abbreviate class labels for better fit
+    abbreviated_classes = ['Not Cat', 'Unknown Enter', 'Morris Leave', 'Morris Enter', 'Prey']
 
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=CLASSES, yticklabels=CLASSES)
-    plt.xlabel('Predicted Label')
-    plt.ylabel('True Label')
-    plt.title('Confusion Matrix')
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(
+        cm, 
+        annot=True, 
+        fmt='d', 
+        cmap='Blues', 
+        xticklabels=abbreviated_classes, 
+        yticklabels=abbreviated_classes,
+        annot_kws={"size": 14}  # Increase the font size of annotations
+        )
+    plt.xlabel('Predicted Label', fontsize=14)
+    plt.ylabel('True Label', fontsize=14)
+    plt.title('Confusion Matrix', fontsize=16)
+    # Rotate x-axis labels for better readability
+    plt.xticks(rotation=45, ha='right', fontsize=12)
+    plt.yticks(fontsize=12)
+    # Adjust layout to prevent clipping of labels
+    plt.tight_layout()
     plt.savefig(confusion_matrix_filename)
     plt.close()
     print(f"Confusion matrix plot saved to {confusion_matrix_filename}")
+
 
     # Save class weights to a JSON file
     with open(class_weights_filename, 'w') as f:

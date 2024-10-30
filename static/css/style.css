@@ -62,6 +62,11 @@ th, td {
     text-align: left;
     padding: 8px;
     color: white;
+    background-color: inherit;
+}
+.img-report {
+    width: -webkit-fill-available;
+    max-width: 800px;
 }
 
 /* Flash Messages */
