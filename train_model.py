@@ -94,7 +94,7 @@ def preprocess_image(image_path, label):
 
 def preprocess_image_train(image_path, label):
     image, label = preprocess_image(image_path, label)
-    image = data_augmentation(image)
+    #image = data_augmentation(image)
     return image, label
 
 def preprocess_image_val(image_path, label):
@@ -190,7 +190,7 @@ if __name__ == '__main__':
         # Unfreeze some layers of the base model
         base_model.trainable = True
         # Unfreeze the top N layers (adjust as needed)
-        fine_tune_at = 100  # Adjust this value based on your model
+        fine_tune_at = 120  # Adjust this value based on your model
         for layer in base_model.layers[:fine_tune_at]:
             layer.trainable = False
 
@@ -283,3 +283,6 @@ if __name__ == '__main__':
     print(f"Edge TPU model saved to {edgetpu_compiled_model}")
     print("Classification Report:")
     print(report)
+    print("Weights:")
+    print(class_weight_dict)
+    
