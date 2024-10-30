@@ -520,6 +520,19 @@ def send_image(mode, filename):
     else:
         return "Invalid mode", 400
 
+@app.route('/model_performance')
+def model_performance():
+    # Load class weights
+    class_weights_filename = os.path.join('static', 'reports', 'class_weights.json')
+    with open(class_weights_filename, 'r') as f:
+        class_weights = json.load(f)
+    
+    # Class names
+    class_names = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
+    
+    return render_template('model_performance.html', class_weights=class_weights, class_names=class_names)
+
+
 @app.route('/about')
 def about():
     model_info = get_model_info()

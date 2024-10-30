@@ -15,6 +15,7 @@
     <div class="nav-bar">
         <a href="{{ url_for('classify') }}" class="{% if mode == 'classify' %}active{% endif %}">Classification</a>
         <a href="{{ url_for('gallery') }}" class="{% if mode == 'gallery' %}active{% endif %}">Gallery</a>
+        <a href="{{ url_for('model_performance') }}" class="{% if mode == 'model_performance' %}active{% endif %}">Model Performance</a>
         <a href="{{ url_for('about') }}" class="{% if mode == 'about' %}active{% endif %}">About</a>
     </div>
 

@@ -9,15 +9,32 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers
 from sklearn.utils import class_weight
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+from jinja2 import Template
+from contextlib import redirect_stdout
 
 # Directories
 DATASET_IMAGES_DIR = 'dataset/images'
 MODEL_DIR = 'model'
 MODEL_NAME = 'my_model_quant'
+STATIC_DIR = 'static'
+REPORTS_DIR = os.path.join(STATIC_DIR, 'reports')
+IMAGES_DIR = os.path.join(REPORTS_DIR, 'images')
 
 # Ensure directories exist
 os.makedirs(MODEL_DIR, exist_ok=True)
+os.makedirs(REPORTS_DIR, exist_ok=True)
+os.makedirs(IMAGES_DIR, exist_ok=True)
+
+# Update file paths accordingly
+report_filename = os.path.join(REPORTS_DIR, 'classification_report.html')
+accuracy_plot_filename = os.path.join(IMAGES_DIR, 'accuracy_plot.png')
+loss_plot_filename = os.path.join(IMAGES_DIR, 'loss_plot.png')
+confusion_matrix_filename = os.path.join(IMAGES_DIR, 'confusion_matrix.png')
+class_weights_filename = os.path.join(REPORTS_DIR, 'class_weights.json')
+model_summary_filename = os.path.join(REPORTS_DIR, 'model_summary.txt')
 
 # Classes
 CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
@@ -154,7 +171,7 @@ if __name__ == '__main__':
         tf.keras.layers.Dropout(0.5),
         tf.keras.layers.Dense(len(CLASSES), activation='softmax')
     ])
-    
+
     precision_prey = tf.keras.metrics.Precision(class_id=CLASSES.index('prey'), name='precision_prey')
     recall_prey = tf.keras.metrics.Recall(class_id=CLASSES.index('prey'), name='recall_prey')
 
@@ -235,6 +252,40 @@ if __name__ == '__main__':
     print("Loading the best fine-tuned model...")
     model = tf.keras.models.load_model(fine_tune_checkpoint_filepath)
 
+    # ... [After the fine-tuning code and before the evaluation] ...
+
+    # Plotting training & validation accuracy and loss
+
+    # Combine history from initial training and fine-tuning
+    acc = history.history['accuracy'] + history_fine.history['accuracy']
+    val_acc = history.history['val_accuracy'] + history_fine.history['val_accuracy']
+
+    loss = history.history['loss'] + history_fine.history['loss']
+    val_loss = history.history['val_loss'] + history_fine.history['val_loss']
+
+    epochs_range = range(len(acc))
+
+    # Plot Accuracy
+    plt.figure(figsize=(8, 6))
+    plt.plot(epochs_range, acc, label='Training Accuracy')
+    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+    plt.legend(loc='lower right')
+    plt.title('Training and Validation Accuracy')
+    plt.savefig(accuracy_plot_filename)
+    plt.close()
+    print(f"Accuracy plot saved to {accuracy_plot_filename}")
+
+    # Plot Loss
+    plt.figure(figsize=(8, 6))
+    plt.plot(epochs_range, loss, label='Training Loss')
+    plt.plot(epochs_range, val_loss, label='Validation Loss')
+    plt.legend(loc='upper right')
+    plt.title('Training and Validation Loss')
+    plt.savefig(loss_plot_filename)
+    plt.close()
+    print(f"Loss plot saved to {loss_plot_filename}")
+
+
     # Evaluate the model on the validation set
     print("Evaluating the model...")
     val_images = []
@@ -257,6 +308,106 @@ if __name__ == '__main__':
         target_names=CLASSES,
         zero_division=0
     )
+
+    # Generate classification report as a dictionary
+    report_dict = classification_report(
+        val_labels_list,
+        val_pred_labels,
+        target_names=CLASSES,
+        zero_division=0,
+        output_dict=True
+    )
+
+    # Save the classification report as an HTML file
+    report_template = """
+    <html>
+    <head>
+        <title>Classification Report</title>
+        <style>
+            table {
+                border-collapse: collapse;
+                width: 50%;
+            }
+            th, td {
+                border: 1px solid #dddddd;
+                text-align: left;
+                padding: 8px;
+            }   
+        </style>
+    </head>
+    <body>
+        <h1>Classification Report</h1>
+        <table>
+            <tr>
+                <th>Class</th>
+                <th>Precision</th>
+                <th>Recall</th>
+                <th>F1-Score</th>
+                <th>Support</th>
+            </tr>
+            {% for label, metrics in report.items() if label != 'accuracy' and label != 'macro avg' and label != 'weighted avg' %}
+            <tr>
+                <td>{{ label }}</td>
+                <td>{{ '{0:.2f}'.format(metrics['precision']) }}</td>
+                <td>{{ '{0:.2f}'.format(metrics['recall']) }}</td>
+                <td>{{ '{0:.2f}'.format(metrics['f1-score']) }}</td>
+                <td>{{ metrics['support'] }}</td>
+            </tr>
+            {% endfor %}
+            <tr>
+                <td colspan="4"><strong>Accuracy</strong></td>
+                <td><strong>{{ '{0:.2f}'.format(report['accuracy']) }}</strong></td>
+            </tr>
+            <tr>
+                <td colspan="4"><strong>Macro Avg</strong></td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>Precision</td>
+                <td colspan="4">{{ '{0:.2f}'.format(report['macro avg']['precision']) }}</td>
+            </tr>
+            <tr>
+                <td>Recall</td>
+                <td colspan="4">{{ '{0:.2f}'.format(report['macro avg']['recall']) }}</td>
+            </tr>
+            <tr>
+                <td>F1-Score</td>
+                <td colspan="4">{{ '{0:.2f}'.format(report['macro avg']['f1-score']) }}</td>
+            </tr>
+        </table>
+    </body>
+    </html>
+    """
+
+    template = Template(report_template)
+    report_html = template.render(report=report_dict)
+
+    # Save the report as an HTML file
+    with open(report_filename, 'w') as f:
+        f.write(report_html)
+    print(f"Classification report saved to {report_filename}")
+
+    # Generate and save the confusion matrix plot
+    cm = confusion_matrix(val_labels_list, val_pred_labels)
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=CLASSES, yticklabels=CLASSES)
+    plt.xlabel('Predicted Label')
+    plt.ylabel('True Label')
+    plt.title('Confusion Matrix')
+    plt.savefig(confusion_matrix_filename)
+    plt.close()
+    print(f"Confusion matrix plot saved to {confusion_matrix_filename}")
+
+    # Save class weights to a JSON file
+    with open(class_weights_filename, 'w') as f:
+        json.dump(class_weight_dict, f)
+    print(f"Class weights saved to {class_weights_filename}")
+
+    with open(model_summary_filename, 'w') as f:
+        with redirect_stdout(f):
+            model.summary()
+    print(f"Model summary saved to {model_summary_filename}")
 
     # Export the model
     model_save_path = os.path.join(MODEL_DIR, 'my_model')
