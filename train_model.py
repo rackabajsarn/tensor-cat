@@ -61,10 +61,11 @@ def convert_labels(labels_list):
         label = 'not_cat'
         if labels['cat']:
             if labels['morris']:
-                if labels['prey']:
-                    label = 'prey'
-                elif labels['entering']:
-                    label = 'cat_morris_entering'
+                if labels['entering']:
+                    if labels['prey']:
+                        label = 'prey'
+                    else:
+                        label = 'cat_morris_entering'
                 else:
                     label = 'cat_morris_leaving'
             else:
