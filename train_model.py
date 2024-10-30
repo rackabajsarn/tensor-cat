@@ -154,13 +154,18 @@ if __name__ == '__main__':
         tf.keras.layers.Dropout(0.5),
         tf.keras.layers.Dense(len(CLASSES), activation='softmax')
     ])
+    
+    precision_prey = tf.keras.metrics.Precision(class_id=CLASSES.index('prey'), name='precision_prey')
+    recall_prey = tf.keras.metrics.Recall(class_id=CLASSES.index('prey'), name='recall_prey')
 
     # Compile the model with appropriate metrics
     model.compile(
         optimizer='adam',
         loss='sparse_categorical_crossentropy',
         metrics=[
-            tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy')
+            tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
+            precision_prey, 
+            recall_prey
         ]
     )
 
