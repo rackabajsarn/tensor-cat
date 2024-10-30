@@ -20,11 +20,20 @@
 </div>
 <div class="section">
     <h2>Class Weights</h2>
-    <pre>
-{% for class_id, weight in class_weights.items() %}
-Class {{ class_id }} ({{ class_names[class_id] }}): {{ weight }}
-{% endfor %}
-    </pre>
+    <table>
+        <tr>
+            <th>Class ID</th>
+            <th>Class Name</th>
+            <th>Weight</th>
+        </tr>
+        {% for class_id, weight in class_weights.items() %}
+        <tr>
+            <td>{{ class_id }}</td>
+            <td>{{ class_names[class_id] }}</td>
+            <td>{{ '{0:.2f}'.format(weight) }}</td>
+        </tr>
+        {% endfor %}
+    </table>
 </div>
 <div class="section">
     <h2>Model Summary</h2>
