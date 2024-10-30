@@ -27,12 +27,13 @@
             <th>Weight</th>
         </tr>
         {% for class_id, weight in class_weights.items() %}
+        {% set class_id_int = class_id | int %}
         <tr>
-            <td>{{ class_id }}</td>
-            <td>{{ class_names[class_id] }}</td>
+            <td>{{ class_id_int }}</td>
+            <td>{{ class_names[class_id_int] }}</td>
             <td>{{ '{0:.2f}'.format(weight) }}</td>
         </tr>
-        {% endfor %}
+    {% endfor %}
     </table>
 </div>
 <div class="section">
