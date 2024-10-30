@@ -379,7 +379,7 @@ if __name__ == '__main__':
     # Generate and save the confusion matrix plot
     cm = confusion_matrix(val_labels_list, val_pred_labels)
 
-    plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(10, 8))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=CLASSES, yticklabels=CLASSES)
     plt.xlabel('Predicted Label')
     plt.ylabel('True Label')
