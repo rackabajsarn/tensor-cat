@@ -32,8 +32,15 @@
                 
         <button type="submit">Retrain Model</button>
     </form>
-    <h2>Retraining Status</h2>
-    <p>Retraining: <span id="retraining-status">{{ retraining_status.retraining }}</span></p>
+    <h2>Retraining Status:</h2>
+    {% if retraining_status.retraining %}
+        <p>Retraining is in progress...</p>
+        <progress id="retraining-progress-bar" value="{{ retraining_status.progress }}" max="100"></progress>
+        <span id="progress-percentage">{{ retraining_status.progress }}%</span>
+    {% else %}
+        <p>Retraining is not in progress.</p>
+    {% endif %}
+
     {% if retraining_status.error %}
         <p style="color:red;">Error: {{ retraining_status.error }}</p>
     {% endif %}
@@ -85,4 +92,86 @@
 
 <!-- Include Font Awesome for Icons -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script>
+    // Function to poll retraining status
+    function pollRetrainingStatus() {
+        fetch('{{ url_for("status") }}')
+            .then(response => response.json())
+            .then(data => {
+                if (data.retraining) {
+                    // Update progress bar if needed
+                    updateProgressBar(data.progress);
+                } else if (data.completed) {
+                    // Retraining completed
+                    // Display flash message
+                    alert('Retraining completed successfully!');
+                    // Optionally, reload the page
+                    window.location.reload();
+                }
+            })
+            .catch(error => console.error('Error fetching retraining status:', error));
+    }
+
+    // Function to update progress bar
+    function updateProgressBar(progress) {
+        const progressBar = document.getElementById('retraining-progress-bar');
+        if (progressBar) {
+            progressBar.value = progress;
+            progressBar.innerText = progress + '%';
+        }
+    }
+
+    // Start polling every 5 seconds
+    setInterval(pollRetrainingStatus, 5000);
+
+    function fetchRetrainingStatus() {
+        $.ajax({
+            url: '/status',
+            type: 'GET',
+            dataType: 'json',
+            success: function(data) {
+                // Update retraining status
+                $('#retraining-status').text(data.retraining);
+                
+                // Update last trained time
+                $('#last-trained').text(data.last_trained || 'Never');
+                
+                // Update images used
+                $('#images-used').text(data.images_used || 0);
+                
+                // Handle error messages
+                if(data.error) {
+                    $('#error-message').text('Error: ' + data.error);
+                } else {
+                    $('#error-message').text('');
+                }
+
+                // Disable or enable retrain button based on retraining status
+                if(data.retraining) {
+                    $('button[type="submit"]').attr('disabled', true).text('Retraining...');
+                } else {
+                    $('button[type="submit"]').attr('disabled', false).text('Start Retraining');
+                }
+
+                // Update retraining output
+                $("#retraining-output").text(data.output);
+                // Auto-scroll to the bottom
+                $("#retraining-output").scrollTop($("#retraining-output")[0].scrollHeight);
+            },
+            error: function(xhr, status, error) {
+                console.error('Failed to fetch retraining status:', error);
+                $('#error-message').text('Failed to fetch retraining status.');
+                // Optionally, keep the retrain button enabled
+                $('button[type="submit"]').attr('disabled', false).text('Start Retraining');
+            }
+        });
+    }
+
+    // Initial fetch when the page loads
+    fetchRetrainingStatus();
+
+    // Poll the status every 5 seconds (5000 milliseconds)
+    setInterval(fetchRetrainingStatus, 5000);
+</script>
+
 {% endblock %}

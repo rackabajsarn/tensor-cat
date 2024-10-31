@@ -57,6 +57,11 @@ CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
 
+class ProgressCallback(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        total_epochs = self.params['epochs']
+        progress = int((epoch + 1) / total_epochs * 100)
+        print(f'PROGRESS:{progress}')
 
 def get_image_labels(image_path):
     try:
@@ -217,6 +222,8 @@ if __name__ == '__main__':
         save_best_only=True
     )
 
+    progress_callback = ProgressCallback()
+    
     # Train the model
     print("Training the model...")
     history = model.fit(
@@ -224,7 +231,7 @@ if __name__ == '__main__':
         validation_data=val_ds,
         epochs=EPOCHS,
         class_weight=class_weight_dict,
-        callbacks=[model_checkpoint_callback]
+        callbacks=[model_checkpoint_callback, progress_callback]
     )
 
     # Fine-tune the model
@@ -272,7 +279,7 @@ if __name__ == '__main__':
             epochs=total_epochs,
             initial_epoch=history.epoch[-1],
             class_weight=class_weight_dict,
-            callbacks=[fine_tune_checkpoint_callback,early_stopping_callback]
+            callbacks=[fine_tune_checkpoint_callback, early_stopping_callback, progress_callback]
         )
 
     # Load the best model from fine-tuning

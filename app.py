@@ -38,8 +38,11 @@ retraining_status = {
     'error': None,
     'last_trained': None,
     'images_used': 0,
-    'output': ""  # To capture retraining output
+    'output': "",
+    'progress': 0,  # Add progress key
+    'completed': False  # Add completed flag
 }
+
 
 # Ensure directories exist
 os.makedirs(STATIC_IMAGES_DIR, exist_ok=True)
@@ -277,8 +280,10 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
             logging.warning("Retraining is already in progress.")
             return
         retraining_status['retraining'] = True
+        retraining_status['completed'] = False  # Reset completed flag
         retraining_status['error'] = None  # Reset previous errors
         retraining_status['output'] = ""    # Reset previous output
+        retraining_status['progress'] = 0  # Reset progress
         update_model_info(retraining=True)
     
     try:
@@ -314,10 +319,20 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
 
         logging.info("Retraining process started.")
         # Read the output in real-time
-        for line in iter(process.stdout.readline, ''):
-            if line:
-                logging.info(line.strip())
-                retraining_status['output'] += line
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break
+            line = line.strip()
+            if line.startswith('PROGRESS:'):
+                # Extract progress value
+                progress_value = int(line.split('PROGRESS:')[1])
+                retraining_status['progress'] = progress_value
+                logging.info(f'Retraining progress: {progress_value}%')
+            else:
+                # Regular output
+                retraining_status['output'] += line + '\n'
+                logging.info(line)
         process.stdout.close()
         return_code = process.wait()
 
@@ -331,6 +346,7 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
         if return_code == 0:
             retraining_status['last_trained'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             retraining_status['images_used'] = count_current_dataset_images()
+            retraining_status['completed'] = True
             update_model_info(
                 last_trained=retraining_status['last_trained'],
                 images_used=retraining_status['images_used'],
@@ -340,6 +356,7 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
                 learning_rate=learning_rate,
                 fine_tune_at=fine_tune_at
             )
+            flash('Training successfull!', 'success')
             logging.info("Model retraining completed successfully.")
             load_model()
         else:
@@ -617,7 +634,7 @@ def model():
     learning_rate = training_params.get('learning_rate', '1e-5')
     fine_tune_at = training_params.get('fine_tune_at', 120)
     
-    learning_rates = ['1e0', '1e-1', '1e-2', '1e-3', '1e-4', '1e-5', '1e-6', '1e-7', '1e-8', '1e-9', '1e-10']
+    learning_rates = ['1e-01', '1e-02', '1e-03', '1e-04', '1e-05', '1e-06', '1e-07', '1e-08', '1e-09', '1e-10']
 
 
     return render_template('model.html',

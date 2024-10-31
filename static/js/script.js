@@ -286,54 +286,54 @@ fine_tune_epochs.addEventListener('input', function() {
     fineTuneEpochsOutput.textContent = fine_tune_epochs.value;
 });
 
-$(document).ready(function() {
-    // Function to fetch retraining status
-    function fetchRetrainingStatus() {
-        $.ajax({
-            url: '/status',
-            type: 'GET',
-            dataType: 'json',
-            success: function(data) {
-                // Update retraining status
-                $('#retraining-status').text(data.retraining);
+// $(document).ready(function() {
+//     // Function to fetch retraining status
+//     function fetchRetrainingStatus() {
+//         $.ajax({
+//             url: '/status',
+//             type: 'GET',
+//             dataType: 'json',
+//             success: function(data) {
+//                 // Update retraining status
+//                 $('#retraining-status').text(data.retraining);
                 
-                // Update last trained time
-                $('#last-trained').text(data.last_trained || 'Never');
+//                 // Update last trained time
+//                 $('#last-trained').text(data.last_trained || 'Never');
                 
-                // Update images used
-                $('#images-used').text(data.images_used || 0);
+//                 // Update images used
+//                 $('#images-used').text(data.images_used || 0);
                 
-                // Handle error messages
-                if(data.error) {
-                    $('#error-message').text('Error: ' + data.error);
-                } else {
-                    $('#error-message').text('');
-                }
+//                 // Handle error messages
+//                 if(data.error) {
+//                     $('#error-message').text('Error: ' + data.error);
+//                 } else {
+//                     $('#error-message').text('');
+//                 }
 
-                // Disable or enable retrain button based on retraining status
-                if(data.retraining) {
-                    $('button[type="submit"]').attr('disabled', true).text('Retraining...');
-                } else {
-                    $('button[type="submit"]').attr('disabled', false).text('Start Retraining');
-                }
+//                 // Disable or enable retrain button based on retraining status
+//                 if(data.retraining) {
+//                     $('button[type="submit"]').attr('disabled', true).text('Retraining...');
+//                 } else {
+//                     $('button[type="submit"]').attr('disabled', false).text('Start Retraining');
+//                 }
 
-                // Update retraining output
-                $("#retraining-output").text(data.output);
-                // Auto-scroll to the bottom
-                $("#retraining-output").scrollTop($("#retraining-output")[0].scrollHeight);
-            },
-            error: function(xhr, status, error) {
-                console.error('Failed to fetch retraining status:', error);
-                $('#error-message').text('Failed to fetch retraining status.');
-                // Optionally, keep the retrain button enabled
-                $('button[type="submit"]').attr('disabled', false).text('Start Retraining');
-            }
-        });
-    }
+//                 // Update retraining output
+//                 $("#retraining-output").text(data.output);
+//                 // Auto-scroll to the bottom
+//                 $("#retraining-output").scrollTop($("#retraining-output")[0].scrollHeight);
+//             },
+//             error: function(xhr, status, error) {
+//                 console.error('Failed to fetch retraining status:', error);
+//                 $('#error-message').text('Failed to fetch retraining status.');
+//                 // Optionally, keep the retrain button enabled
+//                 $('button[type="submit"]').attr('disabled', false).text('Start Retraining');
+//             }
+//         });
+//     }
 
-    // Initial fetch when the page loads
-    fetchRetrainingStatus();
+//     // Initial fetch when the page loads
+//     fetchRetrainingStatus();
 
-    // Poll the status every 5 seconds (5000 milliseconds)
-    setInterval(fetchRetrainingStatus, 5000);
-});
+//     // Poll the status every 5 seconds (5000 milliseconds)
+//     setInterval(fetchRetrainingStatus, 5000);
+// });
