@@ -144,6 +144,10 @@ def representative_data_gen():
 if __name__ == '__main__':
     # Load dataset
     print("Loading dataset...")
+    print("Epochs:", EPOCHS)
+    print("Fine Tune Epochs:", FINE_TUNE_EPOCHS)
+    print("Learning Rate:", LEARNING_RATE)
+    print("Fine tune at layer:", FINE_TUNE_AT)
     image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
     labels_encoded = convert_labels(labels_list)
 
@@ -193,7 +197,7 @@ if __name__ == '__main__':
 
     # Compile the model with appropriate metrics
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
+        optimizer='adam',
         loss='sparse_categorical_crossentropy',
         metrics=[
             tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),

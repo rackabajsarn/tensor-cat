@@ -285,7 +285,7 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
         logging.info("Starting model retraining...")
         
         # Validate input values
-        if epochs < 1 or fine_tune_epochs < 0 or learning_rate <= 0 or fine_tune_at < 0:
+        if epochs < 1 or fine_tune_epochs < 0 or float(learning_rate) <= 0 or fine_tune_at < 0:
             flash('Invalid training parameters provided.', 'danger')
             return redirect(url_for('model'))
 
@@ -300,7 +300,7 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
             train_script_path,
             '--epochs', str(epochs),
             '--fine_tune_epochs', str(fine_tune_epochs),
-            '--learning_rate', str(learning_rate),
+            '--learning_rate', learning_rate,
             '--fine_tune_at', str(fine_tune_at)
         ]
         
@@ -662,7 +662,7 @@ def retrain_model():
             return redirect(url_for('model'))
         
         # Start retraining in a separate thread and pass parameters
-        retrain_thread = threading.Thread(target=run_retraining, args=(epochs, fine_tune_epochs, learning_rate, fine_tune_at))
+        retrain_thread = threading.Thread(target=run_retraining, args=(epochs, fine_tune_epochs, learning_rate_str, fine_tune_at))
         retrain_thread.start()
         
     flash('Retraining started successfully!', 'success')

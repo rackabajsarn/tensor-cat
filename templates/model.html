@@ -19,7 +19,7 @@
         <input type="range" id="fine_tune_epochs" name="fine_tune_epochs" value="{{ fine_tune_epochs }}" min="0" max="50" step="1" oninput="fineTuneEpochsOutput.value = fine_tune_epochs.value" required>
         <output id="fineTuneEpochsOutput">{{ fine_tune_epochs }}</output><br><br>
                 
-        <label for="learning_rate">Learning Rate:</label>
+        <label for="learning_rate">Fine-tuning Learning Rate:</label>
         <select id="learning_rate" name="learning_rate" required>
             {% for lr in learning_rates %}
             <option value="{{ lr }}" {% if lr == learning_rate %}selected{% endif %}>{{ lr }}</option>
