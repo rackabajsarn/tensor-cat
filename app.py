@@ -401,7 +401,7 @@ def get_model_info():
                 data['training_params'] = {
                     "epochs": 10,
                     "fine_tune_epochs": 5,
-                    "learning_rate": 0.00001,
+                    "learning_rate": '1e-5',
                     "fine_tune_at": 120
                 }
             return data
@@ -412,7 +412,7 @@ def get_model_info():
             "training_params": {
                 "epochs": 10,
                 "fine_tune_epochs": 5,
-                "learning_rate": 0.00001,
+                "learning_rate": '1e-5',
                 "fine_tune_at": 120
             }
         }
@@ -423,7 +423,7 @@ def get_model_info():
             "training_params": {
                 "epochs": 10,
                 "fine_tune_epochs": 5,
-                "learning_rate": 0.00001,
+                "learning_rate": '1e-5',
                 "fine_tune_at": 120
             }
         }
@@ -451,11 +451,9 @@ def update_model_info(last_trained=None, images_used=None, retraining=None, epoc
         data['training_params'] = {
             "epochs": epochs if epochs is not None else data.get('training_params', {}).get('epochs', 10),
             "fine_tune_epochs": fine_tune_epochs if fine_tune_epochs is not None else data.get('training_params', {}).get('fine_tune_epochs', 10),
-            "learning_rate": learning_rate if learning_rate is not None else data.get('training_params', {}).get('learning_rate', 0.001),
+            "learning_rate": learning_rate if learning_rate is not None else data.get('training_params', {}).get('learning_rate', '1e-3'),
             "fine_tune_at": fine_tune_at if fine_tune_at is not None else data.get('training_params', {}).get('fine_tune_at', 150)
         }
-    if learning_rate is not None:
-        data['training_params']['learning_rate'] = float(learning_rate)        
 
     try:
         with open(MODEL_INFO_PATH, 'w') as f:
@@ -616,7 +614,7 @@ def model():
     training_params = model_info.get('training_params', {})
     epochs = training_params.get('epochs', 10)
     fine_tune_epochs = training_params.get('fine_tune_epochs', 5)
-    learning_rate = training_params.get('learning_rate', 0.001)
+    learning_rate = training_params.get('learning_rate', '1e-5')
     fine_tune_at = training_params.get('fine_tune_at', 120)
     
     learning_rates = ['1e0', '1e-1', '1e-2', '1e-3', '1e-4', '1e-5', '1e-6', '1e-7', '1e-8', '1e-9', '1e-10']
@@ -632,7 +630,7 @@ def model():
                             retraining_status=retraining_status,
                             epochs=epochs,
                             fine_tune_epochs=fine_tune_epochs,
-                            learning_rate=str(learning_rate),  # Convert to string for comparison
+                            learning_rate=learning_rate,
                             fine_tune_at=fine_tune_at,
                             learning_rates=learning_rates)
 
@@ -653,7 +651,7 @@ def retrain_model():
         # Retrieve form data
         epochs = request.form.get('epochs', default=10, type=int)
         fine_tune_epochs = request.form.get('fine_tune_epochs', default=10, type=int)
-        learning_rate_str = request.form.get('learning_rate', default='0.001')
+        learning_rate_str = request.form.get('learning_rate', default='1e-5')
         fine_tune_at = request.form.get('fine_tune_at', default=150, type=int)
         
         # Convert learning rate string to float
