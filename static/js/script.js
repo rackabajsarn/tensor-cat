@@ -268,6 +268,24 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 
+const fine_tune_at = document.getElementById('fine_tune_at');
+const fineTuneAtOutput = document.getElementById('fineTuneAtOutput');
+fine_tune_at.addEventListener('input', function() {
+    fineTuneAtOutput.textContent = fine_tune_at.value;
+});
+
+const epochs = document.getElementById('epochs');
+const epochsOutput = document.getElementById('epochsOutput');
+epochs.addEventListener('input', function() {
+    epochsOutput.textContent = epochs.value;
+});
+
+const fine_tune_epochs = document.getElementById('fine_tune_epochs');
+const fineTuneEpochsOutput = document.getElementById('fineTuneEpochsOutput');
+fine_tune_epochs.addEventListener('input', function() {
+    fineTuneEpochsOutput.textContent = fine_tune_epochs.value;
+});
+
 $(document).ready(function() {
     // Function to fetch retraining status
     function fetchRetrainingStatus() {

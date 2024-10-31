@@ -20,8 +20,8 @@ import argparse
 parser = argparse.ArgumentParser(description='Train the model with specified parameters.')
 parser.add_argument('--epochs', type=int, default=10, help='Number of epochs for initial training.')
 parser.add_argument('--fine_tune_epochs', type=int, default=10, help='Number of epochs for fine-tuning.')
-parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for training.')
-parser.add_argument('--fine_tune_at', type=int, default=150, help='Layer number to start fine-tuning from.')
+parser.add_argument('--learning_rate', type=float, default=0.00001, help='Learning rate for training.')
+parser.add_argument('--fine_tune_at', type=int, default=120, help='Layer number to start fine-tuning from.')
 
 args = parser.parse_args()
 
@@ -235,7 +235,7 @@ if __name__ == '__main__':
 
         # Recompile the model with a lower learning rate
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE / 10),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
             loss='sparse_categorical_crossentropy',
             metrics=[
                 tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy')

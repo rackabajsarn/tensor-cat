@@ -7,6 +7,29 @@
         <p><strong>Images Used for Training:</strong> {{ images_used }}</p>
         <p><strong>Current Number of Images in Dataset:</strong> {{ current_dataset_images }}</p>
     </div>
+   
+    <form action="{{ url_for('retrain_model') }}" method="post">
+        <label for="epochs">Epochs: <span id="epochs_value">{{ epochs }}</span></label>
+        <input type="range" id="epochs" name="epochs" value="{{ epochs }}" min="1" max="50" step="1" oninput="epochsOutput.value = epochs.value" required>
+        <output id="epochsOutput">{{ epochs }}</output><br><br>
+        
+        <label for="fine_tune_epochs">Fine-tuning Epochs: <span id="fine_tune_epochs_value">{{ fine_tune_epochs }}</span></label>
+        <input type="range" id="fine_tune_epochs" name="fine_tune_epochs" value="{{ fine_tune_epochs }}" min="0" max="50" step="1" oninput="fineTuneEpochsOutput.value = fine_tune_epochs.value" required>
+        <output id="fineTuneEpochsOutput">{{ fine_tune_epochs }}</output><br><br>
+                
+        <label for="learning_rate">Learning Rate:</label>
+        <select id="learning_rate" name="learning_rate" required>
+            {% for lr in learning_rates %}
+            <option value="{{ lr }}" {% if lr == learning_rate %}selected{% endif %}>{{ lr }}</option>
+            {% endfor %}
+        </select><br><br>
+                
+        <label for="fine_tune_at">Unfreeze Layers From: <span id="fine_tune_at_value">{{ fine_tune_at }}</span></label>
+        <input type="range" id="fine_tune_at" name="fine_tune_at" value="{{ fine_tune_at }}" min="0" max="500" step="10" oninput="fineTuneAtOutput.value = fine_tune_at.value" required>
+        <output id="fineTuneAtOutput">{{ fine_tune_at }}</output><br><br>
+                
+        <button type="submit">Retrain Model</button>
+    </form>
     <h2>Retraining Status:</h2>
     <p>Retraining: <span id="retraining-status">{{ retraining_status.retraining }}</span></p>
     {% if retraining_status.error %}
@@ -15,23 +38,7 @@
     <pre id="retraining-output" style="background-color:#f4f4f4; padding:10px; border:1px solid #ddd; height:300px; overflow:auto;color:black;">
     {{ retraining_status.output }}
     </pre>
-    
-    <!-- Add input fields for training parameters -->
-    <form action="{{ url_for('retrain_model') }}" method="post">
-        <label for="epochs">Epochs:</label>
-        <input type="number" id="epochs" name="epochs" value="10" min="1" required><br><br>
-        
-        <label for="fine_tune_epochs">Fine-tuning Epochs:</label>
-        <input type="number" id="fine_tune_epochs" name="fine_tune_epochs" value="10" min="0" required><br><br>
-        
-        <label for="learning_rate">Learning Rate:</label>
-        <input type="number" id="learning_rate" name="learning_rate" value="0.001" step="0.0001" required><br><br>
-        
-        <label for="fine_tune_at">Unfreeze Layers From:</label>
-        <input type="number" id="fine_tune_at" name="fine_tune_at" value="150" min="0" required><br><br>
-        
-        <button type="submit">Retrain Model</button>
-    </form>
+
 </div>
 
 <h1>Model Performance Overview</h1>

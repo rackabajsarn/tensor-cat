@@ -331,9 +331,15 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
         if return_code == 0:
             retraining_status['last_trained'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             retraining_status['images_used'] = count_current_dataset_images()
-            update_model_info(last_trained=retraining_status['last_trained'],
-                              images_used=retraining_status['images_used'],
-                              retraining=False)
+            update_model_info(
+                last_trained=retraining_status['last_trained'],
+                images_used=retraining_status['images_used'],
+                retraining=False,
+                epochs=epochs,
+                fine_tune_epochs=fine_tune_epochs,
+                learning_rate=learning_rate,
+                fine_tune_at=fine_tune_at
+            )
             logging.info("Model retraining completed successfully.")
             load_model()
         else:
@@ -390,18 +396,50 @@ def get_model_info():
     try:
         with open(MODEL_INFO_PATH, 'r') as f:
             data = json.load(f)
+            # Ensure 'training_params' exists
+            if 'training_params' not in data:
+                data['training_params'] = {
+                    "epochs": 10,
+                    "fine_tune_epochs": 5,
+                    "learning_rate": 0.00001,
+                    "fine_tune_at": 120
+                }
             return data
     except FileNotFoundError:
-        return {"last_trained": "Never", "images_used": 0}
+        return {
+            "last_trained": "Never",
+            "images_used": 0,
+            "training_params": {
+                "epochs": 10,
+                "fine_tune_epochs": 5,
+                "learning_rate": 0.00001,
+                "fine_tune_at": 120
+            }
+        }
     except json.JSONDecodeError:
-        return {"last_trained": "Never", "images_used": 0}
+        return {
+            "last_trained": "Never",
+            "images_used": 0,
+            "training_params": {
+                "epochs": 10,
+                "fine_tune_epochs": 5,
+                "learning_rate": 0.00001,
+                "fine_tune_at": 120
+            }
+        }
 
-def update_model_info(last_trained=None, images_used=None, retraining=None):
+
+def update_model_info(last_trained=None, images_used=None, retraining=None, epochs=None, fine_tune_epochs=None, learning_rate=None, fine_tune_at=None):
     try:
         with open(MODEL_INFO_PATH, 'r') as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        data = {"last_trained": "Never", "images_used": 0, "retraining": False}
+        data = {
+            "last_trained": "Never",
+            "images_used": 0,
+            "retraining": False,
+            "training_params": {}
+        }
 
     if last_trained is not None:
         data['last_trained'] = last_trained
@@ -409,6 +447,15 @@ def update_model_info(last_trained=None, images_used=None, retraining=None):
         data['images_used'] = images_used
     if retraining is not None:
         data['retraining'] = retraining
+    if epochs is not None or fine_tune_epochs is not None or learning_rate is not None or fine_tune_at is not None:
+        data['training_params'] = {
+            "epochs": epochs if epochs is not None else data.get('training_params', {}).get('epochs', 10),
+            "fine_tune_epochs": fine_tune_epochs if fine_tune_epochs is not None else data.get('training_params', {}).get('fine_tune_epochs', 10),
+            "learning_rate": learning_rate if learning_rate is not None else data.get('training_params', {}).get('learning_rate', 0.001),
+            "fine_tune_at": fine_tune_at if fine_tune_at is not None else data.get('training_params', {}).get('fine_tune_at', 150)
+        }
+    if learning_rate is not None:
+        data['training_params']['learning_rate'] = float(learning_rate)        
 
     try:
         with open(MODEL_INFO_PATH, 'w') as f:
@@ -416,6 +463,7 @@ def update_model_info(last_trained=None, images_used=None, retraining=None):
         logging.info("model_info.json updated successfully.")
     except IOError as e:
         logging.error(f"Failed to update model info: {e}")
+
 
 # Flask Routes
 
@@ -526,6 +574,22 @@ def delete_image():
         logging.error(f"Error deleting image {image_path}: {e}")
         return jsonify({'success': False, 'message': 'Failed to delete image.'}), 500
 
+@app.route('/delete_all_images', methods=['POST'])
+def delete_all_images():
+    try:
+        image_files = [f for f in os.listdir(STATIC_IMAGES_DIR) if allowed_file(f)]
+        for filename in image_files:
+            image_path = os.path.join(STATIC_IMAGES_DIR, filename)
+            os.remove(image_path)
+        flash('All images have been deleted successfully.', 'success')
+        logging.info("All images in the classification folder have been deleted.")
+        return redirect(url_for('classify'))
+    except Exception as e:
+        logging.error(f"Error deleting all images: {e}")
+        flash('An error occurred while deleting images.', 'danger')
+        return redirect(url_for('classify'))
+
+
 @app.route('/image/<mode>/<filename>')
 def send_image(mode, filename):
     if mode == 'classify':
@@ -541,21 +605,37 @@ def model():
     class_weights_filename = os.path.join('static', 'reports', 'class_weights.json')
     with open(class_weights_filename, 'r') as f:
         class_weights = json.load(f)
-        model_info = get_model_info()
+    model_info = get_model_info()
     last_trained = model_info.get('last_trained', 'Never')
     images_used = model_info.get('images_used', 0)
     current_dataset_images = count_current_dataset_images()
     # Class names
     class_names = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
     
+    # Get training parameters
+    training_params = model_info.get('training_params', {})
+    epochs = training_params.get('epochs', 10)
+    fine_tune_epochs = training_params.get('fine_tune_epochs', 5)
+    learning_rate = training_params.get('learning_rate', 0.001)
+    fine_tune_at = training_params.get('fine_tune_at', 120)
+    
+    learning_rates = ['1e0', '1e-1', '1e-2', '1e-3', '1e-4', '1e-5', '1e-6', '1e-7', '1e-8', '1e-9', '1e-10']
+
+
     return render_template('model.html',
-                           mode='model', 
-                           class_weights=class_weights, 
-                           class_names=class_names,
-                           last_trained=last_trained, 
-                           images_used=images_used, 
-                           current_dataset_images=current_dataset_images,
-                           retraining_status=retraining_status)
+                            mode='model', 
+                            class_weights=class_weights, 
+                            class_names=class_names,
+                            last_trained=last_trained, 
+                            images_used=images_used, 
+                            current_dataset_images=current_dataset_images,
+                            retraining_status=retraining_status,
+                            epochs=epochs,
+                            fine_tune_epochs=fine_tune_epochs,
+                            learning_rate=str(learning_rate),  # Convert to string for comparison
+                            fine_tune_at=fine_tune_at,
+                            learning_rates=learning_rates)
+
 
 
 @app.route('/about')
@@ -569,19 +649,27 @@ def retrain_model():
         if retraining_status['retraining']:
             flash('Retraining is already in progress.', 'warning')
             return redirect(url_for('model'))
-
+        
         # Retrieve form data
         epochs = request.form.get('epochs', default=10, type=int)
         fine_tune_epochs = request.form.get('fine_tune_epochs', default=10, type=int)
-        learning_rate = request.form.get('learning_rate', default=0.001, type=float)
+        learning_rate_str = request.form.get('learning_rate', default='0.001')
         fine_tune_at = request.form.get('fine_tune_at', default=150, type=int)
-
-        # Start retraining in a separate thread
+        
+        # Convert learning rate string to float
+        try:
+            learning_rate = float(eval(learning_rate_str))
+        except Exception as e:
+            flash('Invalid learning rate selected.', 'danger')
+            return redirect(url_for('model'))
+        
+        # Start retraining in a separate thread and pass parameters
         retrain_thread = threading.Thread(target=run_retraining, args=(epochs, fine_tune_epochs, learning_rate, fine_tune_at))
         retrain_thread.start()
         
     flash('Retraining started successfully!', 'success')
     return redirect(url_for('model'))
+
 
 @app.route('/status')
 def status():
