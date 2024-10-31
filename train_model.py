@@ -57,22 +57,22 @@ CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
 
-class ProgressCallback(tf.keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        total_epochs = self.params['epochs']
-        progress = int((epoch + 1) / total_epochs * 100)
-        print(f'\nPROGRESS:{progress}', flush=True)
-
 # class ProgressCallback(tf.keras.callbacks.Callback):
-#     def __init__(self, total_epochs, offset=0):
-#         super().__init__()
-#         self.total_epochs = total_epochs
-#         self.offset = offset  # Number of epochs completed before this phase
-
 #     def on_epoch_end(self, epoch, logs=None):
-#         current_epoch = self.offset + epoch + 1
-#         progress = int((current_epoch / self.total_epochs) * 100)
+#         total_epochs = self.params['epochs']
+#         progress = int((epoch + 1) / total_epochs * 100)
 #         print(f'\nPROGRESS:{progress}', flush=True)
+
+class ProgressCallback(tf.keras.callbacks.Callback):
+    def __init__(self, total_epochs, offset=0):
+        super().__init__()
+        self.total_epochs = total_epochs
+        self.offset = offset  # Number of epochs completed before this phase
+
+    def on_epoch_end(self, epoch, logs=None):
+        current_epoch = self.offset + epoch + 1
+        progress = int((current_epoch / self.total_epochs) * 100)
+        print(f'\nPROGRESS:{progress}', flush=True)
 
 
 def get_image_labels(image_path):
@@ -234,19 +234,25 @@ if __name__ == '__main__':
         save_best_only=True
     )
 
-    progress_callback = ProgressCallback()
+    # Calculate total epochs
+    total_epochs = EPOCHS + FINE_TUNE_EPOCHS
 
-    # Train the model
-    print("Training the model...")
+    # Initial training progress callback
+    progress_callback_initial = ProgressCallback(total_epochs=total_epochs, offset=0)
+
+    # Initial training
     history = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
         class_weight=class_weight_dict,
-        callbacks=[model_checkpoint_callback, progress_callback]
+        callbacks=[model_checkpoint_callback, progress_callback_initial]
     )
 
     # Fine-tune the model
+    
+    progress_callback_fine_tune = ProgressCallback(total_epochs=total_epochs, offset=EPOCHS)
+    
     fine_tune = True
     if fine_tune:
         # Unfreeze some layers of the base model
@@ -281,9 +287,6 @@ if __name__ == '__main__':
             restore_best_weights=True
         )
 
-        fine_tune_epochs = FINE_TUNE_EPOCHS
-        total_epochs = EPOCHS + fine_tune_epochs
-
         print("Fine-tuning the model...")
         history_fine = model.fit(
             train_ds,
@@ -291,7 +294,7 @@ if __name__ == '__main__':
             epochs=total_epochs,
             initial_epoch=history.epoch[-1],
             class_weight=class_weight_dict,
-            callbacks=[fine_tune_checkpoint_callback, early_stopping_callback, progress_callback]
+            callbacks=[fine_tune_checkpoint_callback, early_stopping_callback, progress_callback_fine_tune]
         )
 
     # Load the best model from fine-tuning
