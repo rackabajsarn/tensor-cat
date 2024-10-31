@@ -57,22 +57,22 @@ CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
 
-# class ProgressCallback(tf.keras.callbacks.Callback):
-#     def on_epoch_end(self, epoch, logs=None):
-#         total_epochs = self.params['epochs']
-#         progress = int((epoch + 1) / total_epochs * 100)
-#         print(f'PROGRESS:{progress}')
-
 class ProgressCallback(tf.keras.callbacks.Callback):
-    def __init__(self, total_epochs, offset=0):
-        super().__init__()
-        self.total_epochs = total_epochs
-        self.offset = offset  # Number of epochs completed before this phase
-
     def on_epoch_end(self, epoch, logs=None):
-        current_epoch = self.offset + epoch + 1
-        progress = int((current_epoch / self.total_epochs) * 100)
+        total_epochs = self.params['epochs']
+        progress = int((epoch + 1) / total_epochs * 100)
         print(f'\nPROGRESS:{progress}', flush=True)
+
+# class ProgressCallback(tf.keras.callbacks.Callback):
+#     def __init__(self, total_epochs, offset=0):
+#         super().__init__()
+#         self.total_epochs = total_epochs
+#         self.offset = offset  # Number of epochs completed before this phase
+
+#     def on_epoch_end(self, epoch, logs=None):
+#         current_epoch = self.offset + epoch + 1
+#         progress = int((current_epoch / self.total_epochs) * 100)
+#         print(f'\nPROGRESS:{progress}', flush=True)
 
 
 def get_image_labels(image_path):
