@@ -687,7 +687,13 @@ def retrain_model():
 
 @app.route('/status')
 def status():
-    return jsonify(retraining_status)
+    global retraining_status
+    status_copy = retraining_status.copy()
+    if retraining_status['completed']:
+        # Reset 'completed' flag after sending it to the client
+        retraining_status['completed'] = False
+    return jsonify(status_copy)
+
 
 # Make read_labels available to templates
 @app.context_processor
