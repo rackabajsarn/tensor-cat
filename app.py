@@ -356,7 +356,6 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
                 learning_rate=learning_rate,
                 fine_tune_at=fine_tune_at
             )
-            flash('Training successfull!', 'success')
             logging.info("Model retraining completed successfully.")
             load_model()
         else:
