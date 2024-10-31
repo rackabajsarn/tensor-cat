@@ -323,10 +323,10 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
             line = process.stdout.readline()
             if not line:
                 break
-            line = line.strip()
-            if line.startswith('PROGRESS:'):
+            line = line.strip()  # Remove leading/trailing whitespace
+            if 'PROGRESS:' in line:
                 # Extract progress value
-                progress_value = int(line.split('PROGRESS:')[1])
+                progress_value = int(line.split('PROGRESS:')[-1])
                 retraining_status['progress'] = progress_value
                 logging.info(f'Retraining progress: {progress_value}%')
             else:
