@@ -70,7 +70,7 @@ class ProgressCallback(tf.keras.callbacks.Callback):
         self.offset = offset  # Number of epochs completed before this phase
 
     def on_epoch_end(self, epoch, logs=None):
-        current_epoch = self.offset + epoch + 1
+        current_epoch = epoch + 1
         progress = int((current_epoch / self.total_epochs) * 100)
         print(f'\nPROGRESS:{progress}', flush=True)
 
