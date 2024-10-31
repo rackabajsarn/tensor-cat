@@ -119,6 +119,10 @@
             progressBar.value = progress;
             progressBar.innerText = progress + '%';
         }
+        const progressPerc = document.getElementById('progress-percentage');
+        if (progressPerc) {
+            progressPerc.innerText = progress;
+        }
     }
 
     // Start polling every 5 seconds
