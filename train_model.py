@@ -14,6 +14,22 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from jinja2 import Template
 from contextlib import redirect_stdout
+import argparse
+
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description='Train the model with specified parameters.')
+parser.add_argument('--epochs', type=int, default=10, help='Number of epochs for initial training.')
+parser.add_argument('--fine_tune_epochs', type=int, default=10, help='Number of epochs for fine-tuning.')
+parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for training.')
+parser.add_argument('--fine_tune_at', type=int, default=150, help='Layer number to start fine-tuning from.')
+
+args = parser.parse_args()
+
+EPOCHS = args.epochs
+FINE_TUNE_EPOCHS = args.fine_tune_epochs
+LEARNING_RATE = args.learning_rate
+FINE_TUNE_AT = args.fine_tune_at
+
 
 # Directories
 DATASET_IMAGES_DIR = 'dataset/images'
@@ -40,7 +56,7 @@ model_summary_filename = os.path.join(REPORTS_DIR, 'model_summary.txt')
 CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
-EPOCHS = 10
+
 
 def get_image_labels(image_path):
     try:
@@ -177,7 +193,7 @@ if __name__ == '__main__':
 
     # Compile the model with appropriate metrics
     model.compile(
-        optimizer='adam',
+        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
         loss='sparse_categorical_crossentropy',
         metrics=[
             tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
@@ -185,6 +201,7 @@ if __name__ == '__main__':
             recall_prey
         ]
     )
+
 
     # Define a custom callback to save the best model based on validation accuracy
     checkpoint_filepath = os.path.join(MODEL_DIR, 'best_model.keras')
@@ -212,13 +229,13 @@ if __name__ == '__main__':
         # Unfreeze some layers of the base model
         base_model.trainable = True
         # Unfreeze the top N layers (adjust as needed)
-        fine_tune_at = 120  # Adjust this value based on your model
+        fine_tune_at = FINE_TUNE_AT  # Adjust this value based on your model
         for layer in base_model.layers[:fine_tune_at]:
             layer.trainable = False
 
         # Recompile the model with a lower learning rate
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(1e-5),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE / 10),
             loss='sparse_categorical_crossentropy',
             metrics=[
                 tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy')
@@ -235,7 +252,13 @@ if __name__ == '__main__':
             save_best_only=True
         )
 
-        fine_tune_epochs = 5
+        early_stopping_callback = tf.keras.callbacks.EarlyStopping(
+            monitor='val_loss',
+            patience=3,
+            restore_best_weights=True
+        )
+
+        fine_tune_epochs = FINE_TUNE_EPOCHS
         total_epochs = EPOCHS + fine_tune_epochs
 
         print("Fine-tuning the model...")
@@ -245,7 +268,7 @@ if __name__ == '__main__':
             epochs=total_epochs,
             initial_epoch=history.epoch[-1],
             class_weight=class_weight_dict,
-            callbacks=[fine_tune_checkpoint_callback]
+            callbacks=[fine_tune_checkpoint_callback,early_stopping_callback]
         )
 
     # Load the best model from fine-tuning
@@ -395,8 +418,8 @@ if __name__ == '__main__':
     plt.ylabel('True Label', fontsize=14)
     plt.title('Confusion Matrix', fontsize=16)
     # Rotate x-axis labels for better readability
-    plt.xticks(rotation=45, ha='right', fontsize=12)
-    plt.yticks(fontsize=12)
+    plt.xticks(rotation=45, ha='right', fontsize=10)
+    plt.yticks(fontsize=10)
     # Adjust layout to prevent clipping of labels
     plt.tight_layout()
     plt.savefig(confusion_matrix_filename)

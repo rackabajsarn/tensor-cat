@@ -269,7 +269,7 @@ retrain_lock = threading.Lock()
 
 retraining = False
 
-def run_retraining():
+def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     global retraining_status
     with retrain_lock:
         logging.info("Starting retrain")
@@ -284,20 +284,35 @@ def run_retraining():
     try:
         logging.info("Starting model retraining...")
         
+        # Validate input values
+        if epochs < 1 or fine_tune_epochs < 0 or learning_rate <= 0 or fine_tune_at < 0:
+            flash('Invalid training parameters provided.', 'danger')
+            return redirect(url_for('model'))
+
         # Path to the virtual environment's Python interpreter
         VENV_PATH = '/venv/coral'  # Adjust as per your virtual environment's path
         train_script_path = os.path.join(os.getcwd(), 'train_model.py')  # Ensure correct path
         python_executable = os.path.join(VENV_PATH, 'bin', 'python')
         
-        # Run the retraining script using the virtual environment's Python
+        # Build the command with arguments
+        command = [
+            python_executable,
+            train_script_path,
+            '--epochs', str(epochs),
+            '--fine_tune_epochs', str(fine_tune_epochs),
+            '--learning_rate', str(learning_rate),
+            '--fine_tune_at', str(fine_tune_at)
+        ]
+        
+        # Run the retraining script
         process = subprocess.Popen(
-            [python_executable, train_script_path],
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True  # To capture output as string
         )
 
-        logging.info("Starting retraining process...")
+        logging.info("Retraining process started.")
         # Read the output in real-time
         for line in iter(process.stdout.readline, ''):
             if line:
@@ -318,11 +333,10 @@ def run_retraining():
             retraining_status['images_used'] = count_current_dataset_images()
             update_model_info(last_trained=retraining_status['last_trained'],
                               images_used=retraining_status['images_used'],
-                              retraining=False)  # Update persistent state
+                              retraining=False)
             logging.info("Model retraining completed successfully.")
             load_model()
         else:
-            # On failure
             error_message = f"Retraining failed with return code: {return_code}"
             logging.error(error_message)
             retraining_status['error'] = error_message
@@ -335,6 +349,7 @@ def run_retraining():
     
     finally:
         retraining_status['retraining'] = False
+
 
 def count_current_dataset_images():
     supported_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')  # Add or remove as needed
@@ -520,45 +535,53 @@ def send_image(mode, filename):
     else:
         return "Invalid mode", 400
 
-@app.route('/model_performance')
-def model_performance():
+@app.route('/model')
+def model():
     # Load class weights
     class_weights_filename = os.path.join('static', 'reports', 'class_weights.json')
     with open(class_weights_filename, 'r') as f:
         class_weights = json.load(f)
-    
-    # Class names
-    class_names = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
-    
-    return render_template('model_performance.html',mode='model_performance', class_weights=class_weights, class_names=class_names)
-
-
-@app.route('/about')
-def about():
-    model_info = get_model_info()
+        model_info = get_model_info()
     last_trained = model_info.get('last_trained', 'Never')
     images_used = model_info.get('images_used', 0)
     current_dataset_images = count_current_dataset_images()
-    return render_template('about.html',
-                           mode='about',
+    # Class names
+    class_names = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
+    
+    return render_template('model.html',
+                           mode='model', 
+                           class_weights=class_weights, 
+                           class_names=class_names,
                            last_trained=last_trained, 
                            images_used=images_used, 
                            current_dataset_images=current_dataset_images,
                            retraining_status=retraining_status)
+
+
+@app.route('/about')
+def about():
+    return render_template('about.html',
+                           mode='about')
 
 @app.route('/retrain', methods=['POST'])
 def retrain_model():
     with retrain_lock:
         if retraining_status['retraining']:
             flash('Retraining is already in progress.', 'warning')
-            return redirect(url_for('about'))
-        
+            return redirect(url_for('model'))
+
+        # Retrieve form data
+        epochs = request.form.get('epochs', default=10, type=int)
+        fine_tune_epochs = request.form.get('fine_tune_epochs', default=10, type=int)
+        learning_rate = request.form.get('learning_rate', default=0.001, type=float)
+        fine_tune_at = request.form.get('fine_tune_at', default=150, type=int)
+
         # Start retraining in a separate thread
-        retrain_thread = threading.Thread(target=run_retraining)
+        retrain_thread = threading.Thread(target=run_retraining, args=(epochs, fine_tune_epochs, learning_rate, fine_tune_at))
         retrain_thread.start()
         
     flash('Retraining started successfully!', 'success')
-    return redirect(url_for('about'))
+    return redirect(url_for('model'))
 
 @app.route('/status')
 def status():
