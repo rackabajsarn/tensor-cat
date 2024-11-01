@@ -85,19 +85,28 @@ def find_optimal_parameters(epochs_range, fine_tune_epochs_range, learning_rates
 
 # Plot model performance per combination
 def plot_results(results):
-    learning_rates = list(set([res["learning_rate"] for res in results]))
-    for lr in learning_rates:
-        epochs = [res["epochs"] for res in results if res["learning_rate"] == lr]
-        f1_scores = [res["avg_f1_score_prey"] for res in results if res["learning_rate"] == lr]
-        plt.plot(epochs, f1_scores, label=f"Learning Rate: {lr}")
+    if not results:
+        print("No results to plot.")
+        return
+
+    # Extract unique epochs and corresponding F1 scores
+    epochs = [res["epochs"] for res in results]
+    f1_scores = [res["avg_f1_score_prey"] for res in results]
+
+    if not epochs or not f1_scores:
+        print("No data available to plot.")
+        return
+
+    plt.plot(epochs, f1_scores, marker='o', label="F1 Score vs Epochs")
 
     plt.xlabel("Epochs")
     plt.ylabel("F1 Score (Prey)")
-    plt.title("Model Performance per Parameter Combination")
+    plt.title("Model Performance")
     plt.legend()
     plt.savefig(ACCURACY_PLOT_FILE)
     plt.close()
     print(f"Accuracy plot saved to {ACCURACY_PLOT_FILE}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Optimize model parameters.')
