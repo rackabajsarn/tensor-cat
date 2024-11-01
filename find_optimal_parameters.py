@@ -31,7 +31,7 @@ def save_results(results):
 # Run train_model.py with specified parameters and return metrics
 def run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     command = [
-        "python", "train_model.py",
+        "python", "test_model.py",
         "--epochs", str(epochs),
         "--fine_tune_epochs", str(fine_tune_epochs),
         "--learning_rate", str(learning_rate),
@@ -68,12 +68,20 @@ def find_optimal_parameters(epochs_range, fine_tune_epochs_range, learning_rates
     all_results = []
 
     parameter_combinations = itertools.product(epochs_range, fine_tune_epochs_range, learning_rates, fine_tune_at_range)
+    total_combinations = (len(epochs_range) *
+                          len(fine_tune_epochs_range) *
+                          len(learning_rates) *
+                          len(fine_tune_at_range) *
+                          num_runs)
+    current_iter = 0
 
     for epochs, fine_tune_epochs, learning_rate, fine_tune_at in parameter_combinations:
         accuracies = []
         f1_scores = []
 
         for _ in range(num_runs):
+            current_iter += 1
+            print("Starting iteration ", current_iter, "out of ", total_combinations, "...")
             accuracy, f1_score_prey = run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at)
             if accuracy is not None and f1_score_prey is not None:
                 accuracies.append(accuracy)
@@ -103,20 +111,38 @@ def plot_results(results):
         print("No results to plot.")
         return
 
-    # Extract unique epochs and corresponding F1 scores
-    epochs = [res["epochs"] for res in results]
-    f1_scores = [res["avg_f1_score_prey"] for res in results]
+    import pandas as pd
+    import seaborn as sns
 
-    if not epochs or not f1_scores:
-        print("No data available to plot.")
-        return
+    # Convert results to a DataFrame for easier manipulation
+    df = pd.DataFrame(results)
 
-    plt.plot(epochs, f1_scores, marker='o', label="F1 Score vs Epochs")
+    # Set up the plot style
+    sns.set(style="whitegrid", palette="muted")
+    plt.figure(figsize=(12, 8))
+
+    # Check which parameters have multiple values
+    varying_params = [param for param in ['epochs', 'fine_tune_epochs', 'learning_rate', 'unfreeze_layers']
+                      if df[param].nunique() > 1]
+
+    if not varying_params:
+        print("No varying parameters found. Plotting F1 Score vs Epochs.")
+        sns.lineplot(data=df, x='epochs', y='avg_f1_score_prey', marker='o')
+    else:
+        # Decide which parameters to use for hue and style
+        hue_param = varying_params[0]  # Use the first varying parameter for hue
+        style_param = varying_params[1] if len(varying_params) > 1 else None  # Second for style if available
+
+        # Create the line plot with hue and style
+        sns.lineplot(data=df, x='epochs', y='avg_f1_score_prey',
+                     hue=hue_param, style=style_param, markers=True, dashes=False)
+
+        plt.legend(title='Parameters', bbox_to_anchor=(1.05, 1), loc='upper left')
 
     plt.xlabel("Epochs")
-    plt.ylabel("F1 Score (Prey)")
-    plt.title("Model Performance")
-    plt.legend()
+    plt.ylabel("Average F1 Score (Prey)")
+    plt.title("Model Performance Across Parameter Combinations")
+    plt.tight_layout()
     plt.savefig(ACCURACY_PLOT_FILE)
     plt.close()
     print(f"Accuracy plot saved to {ACCURACY_PLOT_FILE}")
