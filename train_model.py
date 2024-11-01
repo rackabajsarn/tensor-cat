@@ -9,12 +9,13 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers
 from sklearn.utils import class_weight
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 from jinja2 import Template
 from contextlib import redirect_stdout
 import argparse
+
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Train the model with specified parameters.')
@@ -179,6 +180,9 @@ if __name__ == '__main__':
         y=train_labels
     )
     class_weight_dict = dict(enumerate(class_weights))
+
+    # Manually adjust the weight of 'unknown_cat_entering'
+    class_weight_dict[CLASSES.index('unknown_cat_entering')] *= 0.5  # Reduce by half, or some other factor
 
     # Create TensorFlow datasets
     train_ds = tf.data.Dataset.from_tensor_slices((train_paths, train_labels))
@@ -366,6 +370,18 @@ if __name__ == '__main__':
         zero_division=0,
         output_dict=True
     )
+
+    # Calculate F1 score for the 'prey' class
+    f1_prey = f1_score(val_labels_list, val_pred_labels, labels=[CLASSES.index('prey')], average='weighted')
+    print(f"F1 Score for prey: {f1_prey}")
+
+    # Output metrics in JSON format for subprocess
+    output_metrics = {
+        "val_accuracy": history.history['val_accuracy'][-1],
+        "val_loss": history.history['val_loss'][-1],
+        "f1_score": f1_prey
+    }
+    print(json.dumps(output_metrics))
 
     # Save the classification report as an HTML file
     report_template = """
