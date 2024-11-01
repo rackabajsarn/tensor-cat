@@ -32,13 +32,13 @@ def load_best_parameters():
     return best_params
 
 # Run train_model.py with the best parameters
-def run_training(epochs, fine_tune_epochs, learning_rate, unfreeze_layers):
+def run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     command = [
         "python", "train_model.py",
         "--epochs", str(epochs),
         "--fine_tune_epochs", str(fine_tune_epochs),
         "--learning_rate", str(learning_rate),
-        "--unfreeze_layers", str(unfreeze_layers)
+        "--fine_tune_at", str(fine_tune_at)
     ]
     subprocess.run(command)
 
@@ -50,14 +50,14 @@ def find_optimal_model(num_runs):
     epochs = best_params["epochs"]
     fine_tune_epochs = best_params["fine_tune_epochs"]
     learning_rate = best_params["learning_rate"]
-    unfreeze_layers = best_params["unfreeze_layers"]
+    fine_tune_at = best_params["fine_tune_at"]
 
     best_f1_score = 0
 
     # Train the model multiple times to find the best version
     for i in range(num_runs):  # Number of times to run the training
         print(f"Training iteration {i + 1}/{num_runs} with the best parameters...")
-        run_training(epochs, fine_tune_epochs, learning_rate, unfreeze_layers)
+        run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at)
 
         # Load the model after training
         model_path = os.path.join('model', 'best_model.keras')

@@ -28,13 +28,13 @@ def save_results(results):
         json.dump(data, f, indent=4)
 
 # Run train_model.py with specified parameters and return metrics
-def run_training(epochs, fine_tune_epochs, learning_rate, unfreeze_layers):
+def run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     command = [
         "python", "train_model.py",
         "--epochs", str(epochs),
         "--fine_tune_epochs", str(fine_tune_epochs),
         "--learning_rate", str(learning_rate),
-        "--unfreeze_layers", str(unfreeze_layers)
+        "--fine_tune_at", str(fine_tune_at)
     ]
     result = subprocess.run(command, capture_output=True, text=True)
 
@@ -53,17 +53,17 @@ def run_training(epochs, fine_tune_epochs, learning_rate, unfreeze_layers):
     return accuracy, f1_score_prey
 
 # Run the optimization
-def find_optimal_parameters(epochs_range, fine_tune_epochs_range, learning_rates, unfreeze_layers_range, num_runs):
+def find_optimal_parameters(epochs_range, fine_tune_epochs_range, learning_rates, fine_tune_at_range, num_runs):
     all_results = []
 
-    parameter_combinations = itertools.product(epochs_range, fine_tune_epochs_range, learning_rates, unfreeze_layers_range)
+    parameter_combinations = itertools.product(epochs_range, fine_tune_epochs_range, learning_rates, fine_tune_at_range)
 
-    for epochs, fine_tune_epochs, learning_rate, unfreeze_layers in parameter_combinations:
+    for epochs, fine_tune_epochs, learning_rate, fine_tune_at in parameter_combinations:
         accuracies = []
         f1_scores = []
 
         for _ in range(num_runs):
-            accuracy, f1_score_prey = run_training(epochs, fine_tune_epochs, learning_rate, unfreeze_layers)
+            accuracy, f1_score_prey = run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at)
             if accuracy is not None and f1_score_prey is not None:
                 accuracies.append(accuracy)
                 f1_scores.append(f1_score_prey)
@@ -76,7 +76,7 @@ def find_optimal_parameters(epochs_range, fine_tune_epochs_range, learning_rates
                 "epochs": epochs,
                 "fine_tune_epochs": fine_tune_epochs,
                 "learning_rate": learning_rate,
-                "unfreeze_layers": unfreeze_layers,
+                "fine_tune_at": fine_tune_at,
                 "avg_accuracy": avg_accuracy,
                 "avg_f1_score_prey": avg_f1_score
             }
@@ -120,7 +120,7 @@ if __name__ == "__main__":
                         help='List of fine-tune epochs values.')
     parser.add_argument('--learning_rates', nargs='+', type=float, required=True,
                         help='List of learning rate values.')
-    parser.add_argument('--unfreeze_layers_range', nargs='+', type=int, required=True,
+    parser.add_argument('--fine_tune_at_range', nargs='+', type=int, required=True,
                         help='List of unfreeze layers values.')
     parser.add_argument('--num_runs', type=int, default=3,
                         help='Number of runs per parameter combination.')
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     EPOCHS_RANGE = args.epochs_range
     FINE_TUNE_EPOCHS_RANGE = args.fine_tune_epochs_range
     LEARNING_RATES = args.learning_rates
-    UNFREEZE_LAYERS_RANGE = args.unfreeze_layers_range
+    FINE_TUNE_AT_RANGE = args.fine_tune_at_range
     NUM_RUNS = args.num_runs
 
-    find_optimal_parameters(EPOCHS_RANGE, FINE_TUNE_EPOCHS_RANGE, LEARNING_RATES, UNFREEZE_LAYERS_RANGE, NUM_RUNS)
+    find_optimal_parameters(EPOCHS_RANGE, FINE_TUNE_EPOCHS_RANGE, LEARNING_RATES, FINE_TUNE_AT_RANGE, NUM_RUNS)
