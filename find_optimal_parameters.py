@@ -5,6 +5,7 @@ import itertools
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
+import re
 
 # Directory for saving optimization results
 OPTIMIZATION_DIR = 'optimization'
@@ -38,13 +39,14 @@ def run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     ]
     result = subprocess.run(command, capture_output=True, text=True)
 
-    # print("Subprocess Output:")
-    # print(result.stdout)  # Add this line to see the output
+    print("Subprocess Output:")
+    print(result.stdout)  # Add this line to see the output
 
     # Parse JSON output
     
     for line in result.stdout.strip().split('\n'):
-        if line.startswith("{"):
+        accuracy_match = re.search(r"val_accuracy:\s*{?([\d\.]+)}?", line)
+        if accuracy_match:
             try:
                 metrics = json.loads(line)
                 accuracy = metrics.get("val_accuracy")

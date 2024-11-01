@@ -161,11 +161,11 @@ def representative_data_gen():
 
 if __name__ == '__main__':
     # Load dataset
-    print("Loading dataset...")
-    print("Epochs:", EPOCHS)
-    print("Fine Tune Epochs:", FINE_TUNE_EPOCHS)
-    print("Learning Rate:", LEARNING_RATE)
-    print("Fine tune at layer:", FINE_TUNE_AT)
+    # print("Loading dataset...")
+    # print("Epochs:", EPOCHS)
+    # print("Fine Tune Epochs:", FINE_TUNE_EPOCHS)
+    # print("Learning Rate:", LEARNING_RATE)
+    # print("Fine tune at layer:", FINE_TUNE_AT)
     image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
     labels_encoded = convert_labels(labels_list)
 
