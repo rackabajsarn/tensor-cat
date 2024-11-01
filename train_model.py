@@ -250,7 +250,8 @@ if __name__ == '__main__':
         validation_data=val_ds,
         epochs=EPOCHS,
         class_weight=class_weight_dict,
-        callbacks=[model_checkpoint_callback, progress_callback_initial]
+        callbacks=[model_checkpoint_callback, progress_callback_initial],
+        verbose=2
     )
 
     # Fine-tune the model
@@ -298,7 +299,8 @@ if __name__ == '__main__':
             epochs=total_epochs,
             initial_epoch=history.epoch[-1],
             class_weight=class_weight_dict,
-            callbacks=[fine_tune_checkpoint_callback, early_stopping_callback, progress_callback_fine_tune]
+            callbacks=[fine_tune_checkpoint_callback, early_stopping_callback, progress_callback_fine_tune],
+            verbose=2
         )
 
     # Load the best model from fine-tuning

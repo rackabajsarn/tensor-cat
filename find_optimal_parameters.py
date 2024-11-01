@@ -38,22 +38,25 @@ def run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     ]
     result = subprocess.run(command, capture_output=True, text=True)
 
-    print("Subprocess Output:")
-    print(result.stdout)  # Add this line to see the output
+    # print("Subprocess Output:")
+    # print(result.stdout)  # Add this line to see the output
 
     # Parse JSON output
-    try:
-        metrics = json.loads(result.stdout)
-        accuracy = metrics.get("val_accuracy")
-        f1_score_prey = metrics.get("f1_score")
-        print(f"Extracted accuracy: {accuracy}")
-        print(f"Extracted F1 score: {f1_score_prey}")
-    except json.JSONDecodeError as e:
-        print(f"Error parsing JSON output: {e}")
-        print("Subprocess output was:")
-        print(result.stdout)
-        accuracy = None
-        f1_score_prey = None
+    
+    for line in result.stdout.strip().split('\n'):
+        if line.startswith("{"):
+            try:
+                metrics = json.loads(line)
+                accuracy = metrics.get("val_accuracy")
+                f1_score_prey = metrics.get("f1_score")
+                print(f"Extracted accuracy: {accuracy}")
+                print(f"Extracted F1 score: {f1_score_prey}")
+            except json.JSONDecodeError as e:
+                print(f"Error parsing JSON output: {e}")
+                print("Subprocess output was:")
+                print(result.stdout)
+                accuracy = None
+                f1_score_prey = None
 
     return accuracy, f1_score_prey
 
