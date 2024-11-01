@@ -39,13 +39,13 @@ def run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     ]
     result = subprocess.run(command, capture_output=True, text=True)
 
-    print("Subprocess Output:")
-    print(result.stdout)  # Add this line to see the output
+    # print("Subprocess Output:")
+    # print(result.stdout)  # Add this line to see the output
 
     # Parse JSON output
     
     for line in result.stdout.strip().split('\n'):
-        accuracy_match = re.search(r"val_accuracy:\s*{?([\d\.]+)}?", line)
+        accuracy_match = re.search(r"{""val_accuracy"":\s*([\d\.]+)", line)
         if accuracy_match:
             try:
                 metrics = json.loads(line)
