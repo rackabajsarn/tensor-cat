@@ -41,11 +41,14 @@ def run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
 
     # print("Subprocess Output:")
     # print(result.stdout)  # Add this line to see the output
+    
+    accuracy = None
+    f1_score_prey = None
 
     # Parse JSON output
-    
+
     for line in result.stdout.strip().split('\n'):
-        accuracy_match = re.search(r"{""val_accuracy"":\s*([\d\.]+)", line)
+        accuracy_match = re.search(r'{"val_accuracy":', line)
         if accuracy_match:
             try:
                 metrics = json.loads(line)
@@ -57,8 +60,6 @@ def run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
                 print(f"Error parsing JSON output: {e}")
                 print("Subprocess output was:")
                 print(result.stdout)
-                accuracy = None
-                f1_score_prey = None
 
     return accuracy, f1_score_prey
 
