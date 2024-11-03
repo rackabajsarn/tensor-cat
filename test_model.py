@@ -9,11 +9,7 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers
 from sklearn.utils import class_weight
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
-import matplotlib.pyplot as plt
-import seaborn as sns
-from jinja2 import Template
-from contextlib import redirect_stdout
+from sklearn.metrics import classification_report, f1_score
 import argparse
 
 
@@ -170,13 +166,7 @@ if __name__ == '__main__':
     class_weight_dict = dict(enumerate(class_weights))
 
     # Manually adjust the weight of 'unknown_cat_entering'
-    class_weight_dict[CLASSES.index('unknown_cat_entering')] *= 0.5
-
-    print("Sample train labels:", train_labels[:10])
-    print("Sample val labels:", val_labels[:10])
-    print("Unique train labels:", set(train_labels))
-    print("Unique val labels:", set(val_labels))
-
+    #class_weight_dict[CLASSES.index('unknown_cat_entering')] *= 0.5
 
     # Create TensorFlow datasets
     train_ds = tf.data.Dataset.from_tensor_slices((train_paths, train_labels))
@@ -190,25 +180,12 @@ if __name__ == '__main__':
     val_ds = val_ds.batch(BATCH_SIZE)
     val_ds = val_ds.prefetch(buffer_size=tf.data.AUTOTUNE)
 
-    for images, labels in train_ds.take(1):
-        print("Train batch image shape:", images.shape)
-        print("Train batch label shape:", labels.shape)
-
-    for images, labels in val_ds.take(1):
-        print("Validation batch image shape:", images.shape)
-        print("Validation batch label shape:", labels.shape)
-
-
     base_model = tf.keras.applications.MobileNetV2(
         input_shape=(*IMG_SIZE, 3),
         include_top=False,
         weights='imagenet'
     )
     base_model.trainable = False  # Freeze the base model initially
-
-    print("Number of layers in base model:", len(base_model.layers))
-    print("Fine-tune starting at layer:", FINE_TUNE_AT)
-
 
     model = tf.keras.Sequential([
         base_model,
@@ -226,9 +203,9 @@ if __name__ == '__main__':
         optimizer='adam',
         loss='sparse_categorical_crossentropy',
         metrics=[
-            tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy')
-            # precision_prey, 
-            # recall_prey
+            tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
+            precision_prey, 
+            recall_prey
         ]
     )
 
@@ -248,17 +225,13 @@ if __name__ == '__main__':
 
     # Initial training progress callback
     progress_callback_initial = ProgressCallback(total_epochs=total_epochs, offset=0)
-    print("Sample encoded labels:", labels_encoded[:10])
-    print("Unique labels in encoded labels:", set(labels_encoded))
-    print("Number of classes:", len(CLASSES))
-
 
     # Initial training
     history = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
-        #class_weight=class_weight_dict,
+        class_weight=class_weight_dict,
         callbacks=[model_checkpoint_callback, progress_callback_initial],
         verbose=2
     )
@@ -335,9 +308,6 @@ if __name__ == '__main__':
     val_labels_list = np.array(val_labels_list)
 
     val_predictions = model.predict(val_images)
-    print("Shape of val_predictions:", val_predictions.shape)
-    print("Sample val_predictions:", val_predictions[:5])  # Check first 5 predictions
-    print("Unique predicted labels:", set(np.argmax(val_predictions, axis=1)))
     val_pred_labels = np.argmax(val_predictions, axis=1)
 
     # Generate classification report

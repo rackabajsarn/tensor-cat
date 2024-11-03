@@ -182,7 +182,7 @@ if __name__ == '__main__':
     class_weight_dict = dict(enumerate(class_weights))
 
     # Manually adjust the weight of 'unknown_cat_entering'
-    class_weight_dict[CLASSES.index('unknown_cat_entering')] *= 0.5  # Reduce by half, or some other factor
+    #class_weight_dict[CLASSES.index('unknown_cat_entering')] *= 0.5  # Reduce by half, or some other factor
 
     # Create TensorFlow datasets
     train_ds = tf.data.Dataset.from_tensor_slices((train_paths, train_labels))

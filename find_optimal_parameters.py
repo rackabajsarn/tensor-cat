@@ -39,8 +39,8 @@ def run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     ]
     result = subprocess.run(command, capture_output=True, text=True)
 
-    print("Subprocess Output:")
-    print(result.stdout)  # Add this line to see the output
+    # print("Subprocess Output:")
+    # print(result.stdout)  # Add this line to see the output
     
     accuracy = None
     f1_score_prey = None

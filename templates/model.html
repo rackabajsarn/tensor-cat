@@ -12,11 +12,11 @@
     <h2>Training Parameters</h2>
     <form action="{{ url_for('retrain_model') }}" method="post">
         <label for="epochs">Epochs: <span id="epochs_value">{{ epochs }}</span></label>
-        <input type="range" id="epochs" name="epochs" value="{{ epochs }}" min="1" max="50" step="1" oninput="epochsOutput.value = epochs.value" required>
+        <input type="range" id="epochs" name="epochs" value="{{ epochs }}" min="1" max="30" step="1" oninput="epochsOutput.value = epochs.value" required>
         <output id="epochsOutput">{{ epochs }}</output><br><br>
         
         <label for="fine_tune_epochs">Fine-tuning Epochs: <span id="fine_tune_epochs_value">{{ fine_tune_epochs }}</span></label>
-        <input type="range" id="fine_tune_epochs" name="fine_tune_epochs" value="{{ fine_tune_epochs }}" min="0" max="50" step="1" oninput="fineTuneEpochsOutput.value = fine_tune_epochs.value" required>
+        <input type="range" id="fine_tune_epochs" name="fine_tune_epochs" value="{{ fine_tune_epochs }}" min="0" max="20" step="1" oninput="fineTuneEpochsOutput.value = fine_tune_epochs.value" required>
         <output id="fineTuneEpochsOutput">{{ fine_tune_epochs }}</output><br><br>
                 
         <label for="learning_rate">Fine-tuning Learning Rate:</label>
@@ -27,7 +27,7 @@
         </select><br><br>
                 
         <label for="fine_tune_at">Unfreeze Layers From: <span id="fine_tune_at_value">{{ fine_tune_at }}</span></label>
-        <input type="range" id="fine_tune_at" name="fine_tune_at" value="{{ fine_tune_at }}" min="0" max="500" step="10" oninput="fineTuneAtOutput.value = fine_tune_at.value" required>
+        <input type="range" id="fine_tune_at" name="fine_tune_at" value="{{ fine_tune_at }}" min="100" max="155" step="5" oninput="fineTuneAtOutput.value = fine_tune_at.value" required>
         <output id="fineTuneAtOutput">{{ fine_tune_at }}</output><br><br>
                 
         <button type="submit">Retrain Model</button>
