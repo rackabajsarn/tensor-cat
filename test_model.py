@@ -172,6 +172,12 @@ if __name__ == '__main__':
     # Manually adjust the weight of 'unknown_cat_entering'
     class_weight_dict[CLASSES.index('unknown_cat_entering')] *= 0.5
 
+    print("Sample train labels:", train_labels[:10])
+    print("Sample val labels:", val_labels[:10])
+    print("Unique train labels:", set(train_labels))
+    print("Unique val labels:", set(val_labels))
+
+
     # Create TensorFlow datasets
     train_ds = tf.data.Dataset.from_tensor_slices((train_paths, train_labels))
     train_ds = train_ds.map(preprocess_image_train, num_parallel_calls=tf.data.AUTOTUNE)
@@ -239,7 +245,7 @@ if __name__ == '__main__':
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
-        class_weight=class_weight_dict,
+        #class_weight=class_weight_dict,
         callbacks=[model_checkpoint_callback, progress_callback_initial],
         verbose=2
     )
@@ -316,6 +322,9 @@ if __name__ == '__main__':
     val_labels_list = np.array(val_labels_list)
 
     val_predictions = model.predict(val_images)
+    print("Shape of val_predictions:", val_predictions.shape)
+    print("Sample val_predictions:", val_predictions[:5])  # Check first 5 predictions
+    print("Unique predicted labels:", set(np.argmax(val_predictions, axis=1)))
     val_pred_labels = np.argmax(val_predictions, axis=1)
 
     # Generate classification report
