@@ -138,19 +138,19 @@ def preprocess_image(image_path, label):
 
 def preprocess_image_train(image_path, label):
     image, label = preprocess_image(image_path, label)
-    #image = data_augmentation(image)
+
+    # Retrieve augmentation probability for the sample's class
+    augmentation_probability = augmentation_probabilities.get(label.numpy(), 0)
+
+    # Apply augmentation with the calculated probability
+    if tf.random.uniform([]) < augmentation_probability:
+        image = data_augmentation(image)
+
     return image, label
 
 def preprocess_image_val(image_path, label):
     image, label = preprocess_image(image_path, label)
     return image, label
-
-def representative_data_gen():
-    for image_path in image_paths[:100]:
-        image = Image.open(image_path).resize(IMG_SIZE)
-        image = np.array(image).astype(np.float32) / 255.0
-        image = np.expand_dims(image, axis=0)
-        yield [image]
 
 if __name__ == '__main__':
     image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
@@ -163,6 +163,15 @@ if __name__ == '__main__':
     # Optionally, map the counts to class names
     class_distribution = {CLASSES[label]: count for label, count in class_counts.items()}
     print("Class distribution (named):", class_distribution)
+
+    max_count = max(class_counts.values())
+
+    # Calculate augmentation probability for each class
+    augmentation_probabilities = {
+        label: max_count / count for label, count in class_counts.items()
+    }
+    print("Augmentation probabilities:", augmentation_probabilities)
+
 
     # Split dataset
     train_paths, val_paths, train_labels, val_labels = train_test_split(
