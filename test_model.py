@@ -137,20 +137,31 @@ def preprocess_image(image_path, label):
     return image, label
 
 def preprocess_image_train(image_path, label):
-    image, label = preprocess_image(image_path, label)
+    image = tf.io.read_file(image_path)
+    image = tf.image.decode_jpeg(image, channels=3)
+    image = tf.image.resize(image, IMG_SIZE)
+    image = image / 255.0  # Normalize to [0,1]
 
-    # Retrieve augmentation probability for the sample's class
-    augmentation_probability = augmentation_probabilities.get(label.numpy(), 0)
+    # Use tf.py_function to get the probability for the given label
+    augmentation_probability = tf.py_function(get_augmentation_probability, [label], tf.float32)
 
-    # Apply augmentation with the calculated probability
+    # Apply augmentation based on the calculated probability
     if tf.random.uniform([]) < augmentation_probability:
         image = data_augmentation(image)
 
     return image, label
 
+
 def preprocess_image_val(image_path, label):
     image, label = preprocess_image(image_path, label)
     return image, label
+
+# TensorFlow-compatible function to retrieve probability
+def get_augmentation_probability(label):
+    # Convert label to int
+    label = int(label)
+    return tf.constant(augmentation_probabilities_dict.get(label, 0), dtype=tf.float32)
+
 
 if __name__ == '__main__':
     image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
@@ -172,6 +183,9 @@ if __name__ == '__main__':
     }
     print("Augmentation probabilities:", augmentation_probabilities)
 
+    augmentation_probabilities_dict = {
+        label: max_count / count for label, count in class_counts.items()
+    }
 
     # Split dataset
     train_paths, val_paths, train_labels, val_labels = train_test_split(
