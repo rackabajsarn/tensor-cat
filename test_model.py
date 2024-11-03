@@ -190,12 +190,25 @@ if __name__ == '__main__':
     val_ds = val_ds.batch(BATCH_SIZE)
     val_ds = val_ds.prefetch(buffer_size=tf.data.AUTOTUNE)
 
+    for images, labels in train_ds.take(1):
+        print("Train batch image shape:", images.shape)
+        print("Train batch label shape:", labels.shape)
+
+    for images, labels in val_ds.take(1):
+        print("Validation batch image shape:", images.shape)
+        print("Validation batch label shape:", labels.shape)
+
+
     base_model = tf.keras.applications.MobileNetV2(
         input_shape=(*IMG_SIZE, 3),
         include_top=False,
         weights='imagenet'
     )
     base_model.trainable = False  # Freeze the base model initially
+
+    print("Number of layers in base model:", len(base_model.layers))
+    print("Fine-tune starting at layer:", FINE_TUNE_AT)
+
 
     model = tf.keras.Sequential([
         base_model,
