@@ -229,6 +229,10 @@ if __name__ == '__main__':
 
     # Initial training progress callback
     progress_callback_initial = ProgressCallback(total_epochs=total_epochs, offset=0)
+    print("Sample encoded labels:", labels_encoded[:10])
+    print("Unique labels in encoded labels:", set(labels_encoded))
+    print("Number of classes:", len(CLASSES))
+
 
     # Initial training
     history = model.fit(
