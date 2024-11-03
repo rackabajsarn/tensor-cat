@@ -122,9 +122,9 @@ def convert_labels(labels_list):
 
 # Data augmentation for training dataset
 data_augmentation = tf.keras.Sequential([
-    layers.RandomBrightness(0.2),
-    layers.RandomContrast(0.2),
-    layers.GaussianNoise(0.1),
+    layers.RandomBrightness(0.1),
+    layers.RandomContrast(0.1),
+    layers.GaussianNoise(0.05),
 ])
 
 def preprocess_image(image_path, label):
