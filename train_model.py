@@ -16,6 +16,8 @@ from jinja2 import Template
 from contextlib import redirect_stdout
 import argparse
 from collections import Counter
+from collections import defaultdict
+import random
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Train the model with specified parameters.')
@@ -155,7 +157,18 @@ def preprocess_image_val(image_path, label):
     return image, label
 
 def representative_data_gen():
-    for image_path in image_paths[:100]:
+    # Group image paths by their class label
+    class_to_images = defaultdict(list)
+    for path, label in zip(image_paths, labels_encoded):
+        class_to_images[label].append(path)
+
+    # Sample a few images from each class
+    sampled_paths = []
+    for images in class_to_images.values():
+        sampled_paths.extend(random.sample(images, min(len(images), 20)))  # Adjust per-class sample size as needed
+
+    # Generate representative samples
+    for image_path in sampled_paths[:100]:  # Limit to 100 total
         image = Image.open(image_path).resize(IMG_SIZE)
         image = np.array(image).astype(np.float32) / 255.0
         image = np.expand_dims(image, axis=0)
