@@ -82,6 +82,7 @@ def find_optimal_parameters(epochs_range, fine_tune_epochs_range, learning_rates
         for _ in range(num_runs):
             current_iter += 1
             print("Starting iteration ", current_iter, "out of ", total_combinations, "...")
+            print("Epochs:", epochs, "Fine tune epochs:", fine_tune_epochs, "Learning rate:", learning_rate, "Fine tune at:", fine_tune_at)
             accuracy, f1_score_prey = run_training(epochs, fine_tune_epochs, learning_rate, fine_tune_at)
             if accuracy is not None and f1_score_prey is not None:
                 accuracies.append(accuracy)
