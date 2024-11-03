@@ -15,7 +15,7 @@ import seaborn as sns
 from jinja2 import Template
 from contextlib import redirect_stdout
 import argparse
-
+from collections import Counter
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Train the model with specified parameters.')
@@ -170,6 +170,15 @@ if __name__ == '__main__':
     # print("Fine tune at layer:", FINE_TUNE_AT)
     image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
     labels_encoded = convert_labels(labels_list)
+
+
+    # Count the occurrences of each class in the encoded labels
+    class_counts = Counter(labels_encoded)
+    print("Class distribution (encoded):", class_counts)
+
+    # Optionally, map the counts to class names
+    class_distribution = {CLASSES[label]: count for label, count in class_counts.items()}
+    print("Class distribution (named):", class_distribution)
 
     # Split dataset
     train_paths, val_paths, train_labels, val_labels = train_test_split(

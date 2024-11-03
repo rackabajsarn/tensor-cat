@@ -11,6 +11,7 @@ from tensorflow.keras import layers
 from sklearn.utils import class_weight
 from sklearn.metrics import classification_report, f1_score
 import argparse
+from collections import Counter
 
 
 # Parse command-line arguments
@@ -154,6 +155,14 @@ def representative_data_gen():
 if __name__ == '__main__':
     image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
     labels_encoded = convert_labels(labels_list)
+
+    # Count the occurrences of each class in the encoded labels
+    class_counts = Counter(labels_encoded)
+    print("Class distribution (encoded):", class_counts)
+
+    # Optionally, map the counts to class names
+    class_distribution = {CLASSES[label]: count for label, count in class_counts.items()}
+    print("Class distribution (named):", class_distribution)
 
     # Split dataset
     train_paths, val_paths, train_labels, val_labels = train_test_split(
