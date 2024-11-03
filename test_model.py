@@ -137,10 +137,7 @@ def preprocess_image(image_path, label):
     return image, label
 
 def preprocess_image_train(image_path, label):
-    image = tf.io.read_file(image_path)
-    image = tf.image.decode_jpeg(image, channels=3)
-    image = tf.image.resize(image, IMG_SIZE)
-    image = image / 255.0  # Normalize to [0,1]
+    image, label = preprocess_image(image_path, label)
 
     # Use tf.py_function to get the probability for the given label
     augmentation_probability = tf.py_function(get_augmentation_probability, [label], tf.float32)
