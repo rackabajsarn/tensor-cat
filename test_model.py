@@ -226,9 +226,9 @@ if __name__ == '__main__':
         optimizer='adam',
         loss='sparse_categorical_crossentropy',
         metrics=[
-            tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
-            precision_prey, 
-            recall_prey
+            tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy')
+            # precision_prey, 
+            # recall_prey
         ]
     )
 
