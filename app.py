@@ -16,6 +16,7 @@ from PIL import Image
 from pycoral.utils.edgetpu import make_interpreter
 from pycoral.adapters.common import set_input
 from pycoral.adapters.classify import get_classes
+from PIL import ImageOps
 
 app = Flask(__name__)
 app.secret_key = credentials.SECRET_KEY
@@ -243,7 +244,15 @@ def write_labels(image_path, labels):
 def classify_image(image_path):
     try:
         # Preprocess the image
-        image = Image.open(image_path).convert('RGB').resize(IMG_SIZE)
+        # Open the image and convert to RGB
+        image = Image.open(image_path).convert('RGB')
+        
+        # Center crop to the smaller dimension to create a square
+        shorter_side = min(image.size)  # Get the smaller of width or height
+        image = ImageOps.fit(image, (shorter_side, shorter_side), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+        
+        # Resize to target dimensions
+        image = image.resize(IMG_SIZE, Image.Resampling.LANCZOS)
         image = np.array(image).astype(np.uint8)
 
         # Add batch dimension
