@@ -122,7 +122,7 @@ def plot_results(results):
     plt.figure(figsize=(12, 8))
 
     # Check which parameters have multiple values
-    varying_params = [param for param in ['epochs', 'fine_tune_epochs', 'learning_rate', 'unfreeze_layers']
+    varying_params = [param for param in ['epochs', 'fine_tune_epochs', 'learning_rate', 'fine_tune_at']
                       if df[param].nunique() > 1]
 
     if not varying_params:
