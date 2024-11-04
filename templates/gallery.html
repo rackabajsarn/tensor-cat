@@ -12,12 +12,12 @@
     <button class="filter-button" data-filter="prey"><i class="fas fa-paw"></i> Prey</button>
     <button class="filter-button" data-filter="unknown"><i class="fas fa-circle-question"></i> Unknown</button>
 </div>
+<div style=" display:flex; justify-content:center;">
+    <p id="filtered-images"> 
+</div>
 
 <!-- Image Grid -->
 <div class="image-grid">
-    <p>
-        {{ images|length }} images
-    </p>
     {% for image in images %}
         {% set labels = read_labels(image) %}
         <div class="image-item" data-enter="{{ 'yes' if labels.cat and labels.morris and labels.entering and not labels.prey else 'no' }}"

@@ -212,6 +212,7 @@ window.onclick = function(event) {
 // Function to filter images based on selected labels
 function filterImages() {
     const imageItems = document.querySelectorAll('.image-item');
+    const filteredImages = document.getElementById('filtered-images');
     const activeFilters = Array.from(document.querySelectorAll('.filter-button.active'))
         .map(btn => btn.getAttribute('data-filter'))
         .filter(filter => filter !== 'all');
@@ -233,6 +234,8 @@ function filterImages() {
             }
         });
     }
+    const visibleCount = document.querySelectorAll('.image-item:not(.hide)').length;
+    filteredImages.textContent = visibleCount;
 }
 
 document.addEventListener('DOMContentLoaded', function () {
