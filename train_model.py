@@ -58,7 +58,7 @@ model_summary_filename = os.path.join(REPORTS_DIR, 'model_summary.txt')
 # Classes
 CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
 IMG_SIZE = (224, 224)
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 
 # class ProgressCallback(tf.keras.callbacks.Callback):
 #     def on_epoch_end(self, epoch, logs=None):

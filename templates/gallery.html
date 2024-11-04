@@ -6,15 +6,18 @@
 <!-- Filter Buttons -->
 <div class="filter-buttons">
     <button class="filter-button active" data-filter="all">All</button>
-    <button class="filter-button" data-filter="enter"><i class="fas fa-cat"></i> Enter</button>
-    <button class="filter-button" data-filter="leaving"><i class="fas fa-shield-cat"></i> Leaving</button>
-    <button class="filter-button" data-filter="unknown_cat"><i class="fas fa-sign-in-alt"></i> Unknown cat</button>
+    <button class="filter-button" data-filter="enter"><i class="fas fa-right-to-bracket"></i> Enter</button>
+    <button class="filter-button" data-filter="leaving"><i class="fas fa-right-from-bracket"></i> Leaving</button>
+    <button class="filter-button" data-filter="unknown_cat"><i class="fas fa-shield-cat"></i> Unknown cat</button>
     <button class="filter-button" data-filter="prey"><i class="fas fa-paw"></i> Prey</button>
-    <button class="filter-button" data-filter="unknown"><i class="fas fa-paw"></i> Unknown</button>
+    <button class="filter-button" data-filter="unknown"><i class="fas fa-circle-question"></i> Unknown</button>
 </div>
 
 <!-- Image Grid -->
 <div class="image-grid">
+    <p>
+        {{ images|length }} images
+    </p>
     {% for image in images %}
         {% set labels = read_labels(image) %}
         <div class="image-item" data-enter="{{ 'yes' if labels.cat and labels.morris and labels.entering and not labels.prey else 'no' }}"

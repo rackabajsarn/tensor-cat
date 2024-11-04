@@ -642,7 +642,7 @@ def model():
     learning_rate = training_params.get('learning_rate', '1e-5')
     fine_tune_at = training_params.get('fine_tune_at', 120)
     
-    learning_rates = ['5e-6', '6e-6', '7e-6', '8e-6', '9e-6', '1e-6', '2e-6', '3e-6', '4e-6', '5e-6']
+    learning_rates = ['5e-6', '6e-6', '7e-6', '8e-6', '9e-6', '1e-5', '2e-5', '3e-5', '4e-5', '5e-5']
 
 
     return render_template('model.html',
@@ -675,9 +675,9 @@ def retrain_model():
         
         # Retrieve form data
         epochs = request.form.get('epochs', default=10, type=int)
-        fine_tune_epochs = request.form.get('fine_tune_epochs', default=10, type=int)
-        learning_rate_str = request.form.get('learning_rate', default='1e-5')
-        fine_tune_at = request.form.get('fine_tune_at', default=150, type=int)
+        fine_tune_epochs = request.form.get('fine_tune_epochs', default=5, type=int)
+        learning_rate_str = request.form.get('learning_rate', default='8e-6')
+        fine_tune_at = request.form.get('fine_tune_at', default=120, type=int)
         
         # Convert learning rate string to float
         try:
