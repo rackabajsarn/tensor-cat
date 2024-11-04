@@ -37,23 +37,30 @@ document.addEventListener('DOMContentLoaded', () => {
         button.addEventListener('click', () => {
             const filter = button.getAttribute('data-filter');
 
-            if (filter === 'all') {
-                // If 'All' is clicked
-                // Remove 'active' class from other buttons
-                filterButtons.forEach(btn => {
-                    if (btn.getAttribute('data-filter') !== 'all') {
-                        btn.classList.remove('active');
-                    }
-                });
-                // Activate 'All' button
-                button.classList.add('active');
-            } else {
-                // Toggle 'active' on the clicked button
-                button.classList.toggle('active');
-                // Remove 'active' from 'All' button
-                const allButton = document.querySelector('.filter-button[data-filter="all"]');
-                allButton.classList.remove('active');
-            }
+            filterButtons.forEach(btn => {
+                //if (btn.getAttribute('data-filter') !== 'all') {
+                    btn.classList.remove('active');
+                //}
+            });
+            button.classList.toggle('active');
+
+            // if (filter === 'all') {
+            //     // If 'All' is clicked
+            //     // Remove 'active' class from other buttons
+            //     filterButtons.forEach(btn => {
+            //         if (btn.getAttribute('data-filter') !== 'all') {
+            //             btn.classList.remove('active');
+            //         }
+            //     });
+            //     // Activate 'All' button
+            //     button.classList.add('active');
+            // } else {
+            //     // Toggle 'active' on the clicked button
+            //     button.classList.toggle('active');
+            //     // Remove 'active' from 'All' button
+            //     const allButton = document.querySelector('.filter-button[data-filter="all"]');
+            //     allButton.classList.remove('active');
+            // }
 
             // If no filters are active, activate 'All' button
             const activeFilters = Array.from(filterButtons)
