@@ -235,7 +235,7 @@ function filterImages() {
         });
     }
     const visibleCount = document.querySelectorAll('.image-item:not(.hide)').length;
-    filteredImages.textContent = visibleCount;
+    filteredImages.textContent = visibleCount + " images";
 }
 
 document.addEventListener('DOMContentLoaded', function () {
