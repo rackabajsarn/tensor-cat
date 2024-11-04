@@ -642,7 +642,7 @@ def model():
     learning_rate = training_params.get('learning_rate', '1e-5')
     fine_tune_at = training_params.get('fine_tune_at', 120)
     
-    learning_rates = ['1e-1', '1e-2', '1e-3', '1e-4', '1e-5', '1e-6', '1e-7', '1e-8', '1e-9', '1e-10']
+    learning_rates = ['5e-6', '6e-6', '7e-6', '8e-6', '9e-6', '1e-6', '2e-6', '3e-6', '4e-6', '5e-6']
 
 
     return render_template('model.html',

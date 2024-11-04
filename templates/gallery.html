@@ -6,20 +6,22 @@
 <!-- Filter Buttons -->
 <div class="filter-buttons">
     <button class="filter-button active" data-filter="all">All</button>
-    <button class="filter-button" data-filter="cat"><i class="fas fa-cat"></i> Cat</button>
-    <button class="filter-button" data-filter="morris"><i class="fas fa-shield-cat"></i> Morris</button>
-    <button class="filter-button" data-filter="entering"><i class="fas fa-sign-in-alt"></i> Entering</button>
+    <button class="filter-button" data-filter="enter"><i class="fas fa-cat"></i> Enter</button>
+    <button class="filter-button" data-filter="leaving"><i class="fas fa-shield-cat"></i> Leaving</button>
+    <button class="filter-button" data-filter="unknown_cat"><i class="fas fa-sign-in-alt"></i> Unknown cat</button>
     <button class="filter-button" data-filter="prey"><i class="fas fa-paw"></i> Prey</button>
+    <button class="filter-button" data-filter="unknown"><i class="fas fa-paw"></i> Unknown</button>
 </div>
 
 <!-- Image Grid -->
 <div class="image-grid">
     {% for image in images %}
         {% set labels = read_labels(image) %}
-        <div class="image-item" data-cat="{{ 'yes' if labels.cat else 'no' }}"
-                             data-morris="{{ 'yes' if labels.morris else 'no' }}"
-                             data-entering="{{ 'yes' if labels.entering else 'no' }}"
-                             data-prey="{{ 'yes' if labels.prey else 'no' }}">
+        <div class="image-item" data-enter="{{ 'yes' if labels.cat and labels.morris and labels.entering and not labels.prey else 'no' }}"
+                             data-leaving="{{ 'yes' if labels.cat and labels.morris and not labels.entering and not labels.prey else 'no' }}"
+                             data-unknown_cat="{{ 'yes' if labels.entering and not labels.morris and labels.entering and not labels.prey else 'no' }}"
+                             data-prey="{{ 'yes' if labels.cat and labels.morris and labels.entering and labels.prey else 'no' }}"
+                             data-unknown="{{ 'yes' if not labels.cat and not labels.morris and not labels.entering and not labels.prey else 'no' }}">
             <img src="{{ url_for('send_image', mode='gallery', filename=image) }}" alt="{{ image }}" onclick="openModal('{{ image }}', 'gallery')">
             <p>{{ image }}</p>
             <!-- Debugging Labels (remove after testing) -->
