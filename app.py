@@ -153,7 +153,7 @@ def mqtt_on_message(client, userdata, msg):
             labels['morris'] = True
             labels['prey'] = True
             labels['entering'] = True
-            client.publish('catflap/alert', json.dumps({"topic":"ALERT","message":"Morris har fångat mus!","title":"PREY ALERT!"}))
+            client.publish('catflap/alert', json.dumps({"topic":"ALERT","message":"Mus!","title":"PREY ALERT!"}))
         elif predicted_label == 'unknown_cat_entering':
             labels['cat'] = True
             labels['morris'] = False
