@@ -160,7 +160,13 @@ def mqtt_on_message(client, userdata, msg):
             labels['entering'] = True
             # client.publish('catflap/alert', json.dumps({"topic":"INFO","message":"Peekaboo!"}))
 
-        client.publish('catflap/inference',predicted_label)
+        # Publish server inference result (for comparison with ESP32)
+        client.publish('catflap/inference', predicted_label)
+        
+        # Simplify server result for comparison (prey vs not_prey)
+        server_simple = "prey" if predicted_label == "prey" else "not_prey"
+        client.publish('catflap/server_inference', server_simple)
+        
         # Write labels to EXIF
         write_labels(image_path, labels)
         
@@ -281,6 +287,44 @@ retrain_lock = threading.Lock()
 
 retraining = False
 
+def upload_model_to_esp32():
+    """Upload the simple TFLite model to ESP32 via HTTP"""
+    try:
+        model_path = os.path.join('simple_model', 'my_simple_model_quant.tflite')
+        if not os.path.exists(model_path):
+            logging.error(f"Simple model file not found at {model_path}")
+            return False
+        
+        # ESP32 IP address - should be configurable
+        esp32_ip = credentials.ESP32_IP if hasattr(credentials, 'ESP32_IP') else '192.168.1.14'
+        upload_url = f'http://{esp32_ip}/upload'
+        
+        logging.info(f"Uploading model to ESP32 at {upload_url}...")
+        
+        with open(model_path, 'rb') as f:
+            model_data = f.read()
+        
+        files = {'file': ('model.tflite', model_data, 'application/octet-stream')}
+        
+        import requests
+        response = requests.post(upload_url, files=files, timeout=30)
+        
+        if response.status_code == 200:
+            logging.info("Model uploaded successfully to ESP32")
+            retraining_status['output'] += "\nModel uploaded to ESP32 successfully!\n"
+            return True
+        else:
+            error_msg = f"Failed to upload model to ESP32: {response.status_code} - {response.text}"
+            logging.error(error_msg)
+            retraining_status['output'] += f"\n{error_msg}\n"
+            return False
+            
+    except Exception as e:
+        error_msg = f"Error uploading model to ESP32: {e}"
+        logging.error(error_msg)
+        retraining_status['output'] += f"\n{error_msg}\n"
+        return False
+
 def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     global retraining_status
     with retrain_lock:
@@ -305,10 +349,11 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
 
         # Path to the virtual environment's Python interpreter
         VENV_PATH = '/venv/coral'  # Adjust as per your virtual environment's path
-        train_script_path = os.path.join(os.getcwd(), 'train_model.py')  # Ensure correct path
+        train_script_path = os.path.join(os.getcwd(), 'train_model.py')
+        train_simple_script_path = os.path.join(os.getcwd(), 'train_simple_model.py')
         python_executable = os.path.join(VENV_PATH, 'bin', 'python')
         
-        # Build the command with arguments
+        # Build the command for main Coral TPU model
         command = [
             python_executable,
             train_script_path,
@@ -318,7 +363,8 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
             '--fine_tune_at', str(fine_tune_at)
         ]
         
-        # Run the retraining script
+        # Run the retraining script for Coral TPU model
+        retraining_status['output'] += "=== Training Coral TPU Model ===\n"
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -326,7 +372,7 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
             text=True  # To capture output as string
         )
 
-        logging.info("Retraining process started.")
+        logging.info("Coral TPU model retraining process started.")
         # Read the output in real-time
         while True:
             line = process.stdout.readline()
@@ -334,10 +380,10 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
                 break
             line = line.strip()  # Remove leading/trailing whitespace
             if 'PROGRESS:' in line:
-                # Extract progress value
-                progress_value = int(line.split('PROGRESS:')[-1])
+                # Extract progress value (scale to 50% for first phase)
+                progress_value = int(line.split('PROGRESS:')[-1]) // 2
                 retraining_status['progress'] = progress_value
-                logging.info(f'Retraining progress: {progress_value}%')
+                logging.info(f'Coral TPU retraining progress: {progress_value}%')
             else:
                 # Regular output
                 retraining_status['output'] += line + '\n'
@@ -352,7 +398,56 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
             retraining_status['output'] += stderr
         process.stderr.close()
         
-        if return_code == 0:
+        if return_code != 0:
+            error_message = f"Coral TPU model training failed with return code: {return_code}"
+            logging.error(error_message)
+            retraining_status['error'] = error_message
+            update_model_info(retraining=False)
+            retraining_status['retraining'] = False
+            return
+        
+        # Now train the simple ESP32 model
+        retraining_status['output'] += "\n=== Training ESP32 Simple Model ===\n"
+        simple_command = [
+            python_executable,
+            train_simple_script_path,
+            '--epochs', str(40),  # More epochs for simple model
+            '--learning_rate', '1e-3'  # Higher learning rate for custom CNN
+        ]
+        
+        simple_process = subprocess.Popen(
+            simple_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        logging.info("ESP32 simple model training process started.")
+        while True:
+            line = simple_process.stdout.readline()
+            if not line:
+                break
+            line = line.strip()
+            if 'PROGRESS:' in line:
+                # Extract progress value (scale to 50-100% for second phase)
+                progress_value = 50 + (int(line.split('PROGRESS:')[-1]) // 2)
+                retraining_status['progress'] = progress_value
+                logging.info(f'ESP32 model retraining progress: {progress_value}%')
+            else:
+                retraining_status['output'] += line + '\n'
+                logging.info(line)
+        simple_process.stdout.close()
+        simple_return_code = simple_process.wait()
+        
+        # Read any remaining stderr
+        simple_stderr = simple_process.stderr.read()
+        if simple_stderr:
+            logging.error(simple_stderr.strip())
+            retraining_status['output'] += simple_stderr
+        simple_process.stderr.close()
+        
+        if simple_return_code == 0:
+            # Both models trained successfully
             retraining_status['last_trained'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             retraining_status['images_used'] = count_current_dataset_images()
             retraining_status['completed'] = True
@@ -365,10 +460,13 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
                 learning_rate=learning_rate,
                 fine_tune_at=fine_tune_at
             )
-            logging.info("Model retraining completed successfully.")
-            load_model()
+            logging.info("Both models retrained successfully.")
+            load_model()  # Reload the Coral TPU model
+            
+            # Upload simple model to ESP32
+            upload_model_to_esp32()
         else:
-            error_message = f"Retraining failed with return code: {return_code}"
+            error_message = f"ESP32 model training failed with return code: {simple_return_code}"
             logging.error(error_message)
             retraining_status['error'] = error_message
             update_model_info(retraining=False)
