@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="report-page">
+    <div class="report-header">
+        <a href="{{ url_for('model') }}" class="back-link">
+            <i class="fas fa-arrow-left"></i> Back to Models
+        </a>
+        <h1>{{ scope|capitalize }} Model Report</h1>
+        <div class="report-meta">
+            <span class="version-name">Version: {{ version_name }}</span>
+            {% if is_active %}
+            <span class="version-badge">Active</span>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if not is_active %}
+    <div class="report-actions">
+        <button class="activate-btn" onclick="activateVersion('{{ scope }}', '{{ version_name }}')">
+            <i class="fas fa-check"></i> Activate This Version
+        </button>
+    </div>
+    {% endif %}
+
+    <div class="reports-grid">
+        {% if classification_data %}
+        <div class="report-card">
+            <h3>Classification Report</h3>
+            <table>
+                {% for row in classification_data %}
+                <tr>
+                    {% for cell in row %}
+                    <td>{{ cell }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+        {% endif %}
+
+        {% if has_confusion %}
+        <div class="report-card">
+            <h3>Confusion Matrix</h3>
+            <img src="{{ url_for('serve_version_image', scope=scope, version_name=version_name, filename='confusion_matrix.png') }}" alt="Confusion matrix">
+        </div>
+        {% endif %}
+
+        {% if has_accuracy %}
+        <div class="report-card">
+            <h3>Accuracy Over Epochs</h3>
+            <img src="{{ url_for('serve_version_image', scope=scope, version_name=version_name, filename='accuracy_plot.png') }}" alt="Accuracy plot">
+        </div>
+        {% endif %}
+
+        {% if has_loss %}
+        <div class="report-card">
+            <h3>Loss Over Epochs</h3>
+            <img src="{{ url_for('serve_version_image', scope=scope, version_name=version_name, filename='loss_plot.png') }}" alt="Loss plot">
+        </div>
+        {% endif %}
+
+        {% if class_weights %}
+        <div class="report-card">
+            <h3>Class Weights</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Class</th>
+                        <th>Weight</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for class_name, weight in class_weights.items() %}
+                    <tr>
+                        <td>{{ class_name }}</td>
+                        <td>{{ '%.2f' % weight }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        {% if model_summary %}
+        <div class="report-card full-width">
+            <h3>Model Summary</h3>
+            <pre>{{ model_summary }}</pre>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script>
+    function activateVersion(scope, versionName) {
+        if (!confirm(`Activate version ${versionName} as the current ${scope} model?`)) {
+            return;
+        }
+        
+        fetch(`/model/activate/${scope}/${versionName}`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Failed to activate version: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                console.error('Error activating version:', err);
+                alert('Failed to activate version.');
+            });
+    }
+</script>
+{% endblock %}

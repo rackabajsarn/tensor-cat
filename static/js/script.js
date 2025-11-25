@@ -1,6 +1,13 @@
 // static/js/script.js
 
+// Track current image index for navigation
+let currentImageIndex = 0;
+let imageList = [];
+
 document.addEventListener('DOMContentLoaded', () => {
+    // Build the image list from visible thumbnails
+    buildImageList();
+
     // Classification Modal Buttons
     const labelButtons = document.querySelectorAll('.label-button');
     labelButtons.forEach(button => {
@@ -13,21 +20,73 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Save and Back Buttons
-    document.getElementById('save-button').addEventListener('click', () => {
-        const filename = document.getElementById('modalImage').getAttribute('data-filename');
-        const mode = document.getElementById('modalImage').getAttribute('data-mode');
-        saveImage(filename, mode);
-    });
+    const saveButton = document.getElementById('save-button');
+    if (saveButton) {
+        saveButton.addEventListener('click', () => {
+            const modalImage = document.getElementById('modalImage');
+            if (!modalImage) {
+                return;
+            }
+            const filename = modalImage.getAttribute('data-filename');
+            const mode = modalImage.getAttribute('data-mode');
+            saveImage(filename, mode);
+        });
+    }
 
-    document.getElementById('back-button').addEventListener('click', () => {
-        closeModal();
-    });
+    const backButton = document.getElementById('back-button');
+    if (backButton) {
+        backButton.addEventListener('click', () => {
+            closeModal();
+        });
+    }
 
-    // Delete Button
-    document.getElementById('delete-button').addEventListener('click', () => {
-        const filename = document.getElementById('modalImage').getAttribute('data-filename');
-        const mode = document.getElementById('modalImage').getAttribute('data-mode');
-        deleteImage(filename, mode);
+    const deleteButton = document.getElementById('delete-button');
+    if (deleteButton) {
+        deleteButton.addEventListener('click', () => {
+            const modalImage = document.getElementById('modalImage');
+            if (!modalImage) {
+                return;
+            }
+            const filename = modalImage.getAttribute('data-filename');
+            const mode = modalImage.getAttribute('data-mode');
+            deleteImage(filename, mode);
+        });
+    }
+
+    // Navigation buttons
+    const prevButton = document.getElementById('nav-prev');
+    const nextButton = document.getElementById('nav-next');
+    
+    if (prevButton) {
+        prevButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigateToPrev();
+        });
+    }
+    
+    if (nextButton) {
+        nextButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigateToNext();
+        });
+    }
+
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+        const modal = document.getElementById('classifyModal');
+        if (!modal || modal.style.display !== 'block') {
+            return;
+        }
+        
+        if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            navigateToPrev();
+        } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            navigateToNext();
+        } else if (e.key === 'Escape') {
+            closeModal();
+        }
     });
 
     // Filter Buttons
@@ -173,6 +232,11 @@ function openModal(filename, mode) {
     modalImg.setAttribute('data-filename', filename);
     modalImg.setAttribute('data-mode', mode);
 
+    // Update current index for navigation
+    buildImageList();
+    currentImageIndex = imageList.findIndex(img => img.filename === filename);
+    updateNavButtons();
+
     // Fetch current labels to set button states
     fetch('/update_label', {
         method: 'POST',
@@ -193,6 +257,51 @@ function openModal(filename, mode) {
     .catch(error => {
         console.error('Error fetching labels:', error);
     });
+}
+
+// Build list of visible images for navigation
+function buildImageList() {
+    imageList = [];
+    const items = document.querySelectorAll('.image-item:not(.hide)');
+    items.forEach(item => {
+        const img = item.querySelector('img');
+        if (img) {
+            const src = img.getAttribute('src');
+            const onclick = img.getAttribute('onclick');
+            // Extract filename and mode from onclick="openModal('filename', 'mode')"
+            const match = onclick && onclick.match(/openModal\('([^']+)',\s*'([^']+)'\)/);
+            if (match) {
+                imageList.push({ filename: match[1], mode: match[2] });
+            }
+        }
+    });
+}
+
+// Navigate to previous image
+function navigateToPrev() {
+    if (imageList.length === 0) return;
+    currentImageIndex = (currentImageIndex - 1 + imageList.length) % imageList.length;
+    const img = imageList[currentImageIndex];
+    openModal(img.filename, img.mode);
+}
+
+// Navigate to next image
+function navigateToNext() {
+    if (imageList.length === 0) return;
+    currentImageIndex = (currentImageIndex + 1) % imageList.length;
+    const img = imageList[currentImageIndex];
+    openModal(img.filename, img.mode);
+}
+
+// Update navigation button visibility
+function updateNavButtons() {
+    const prevBtn = document.getElementById('nav-prev');
+    const nextBtn = document.getElementById('nav-next');
+    const counter = document.getElementById('nav-counter');
+    
+    if (prevBtn) prevBtn.style.display = imageList.length > 1 ? 'flex' : 'none';
+    if (nextBtn) nextBtn.style.display = imageList.length > 1 ? 'flex' : 'none';
+    if (counter) counter.textContent = `${currentImageIndex + 1} / ${imageList.length}`;
 }
 
 // Close Modal Function
@@ -240,33 +349,28 @@ function filterImages() {
 
 document.addEventListener('DOMContentLoaded', function () {
     const themeToggle = document.getElementById('theme-toggle');
+    const navBar = document.querySelector('.nav-bar');
 
-    // Function to apply the theme
-    function applyTheme(theme) {
-        if (theme === 'dark') {
-            document.body.classList.add('dark-theme');
-            document.getElementById('navbar').classList.add('dark-theme');
-            // Update other components if needed
-        } else {
-            document.body.classList.remove('dark-theme');
-            document.getElementById('navbar').classList.remove('dark-theme');
-            // Update other components if needed
+    const applyTheme = (theme) => {
+        const isDark = theme === 'dark';
+        document.body.classList.toggle('dark-theme', isDark);
+        if (navBar) {
+            navBar.classList.toggle('dark-theme', isDark);
         }
-    }
+    };
 
-    // Check Local Storage for theme preference
     let savedTheme = localStorage.getItem('theme');
     if (!savedTheme) {
-        // Detect system preference
         const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
         savedTheme = prefersDark ? 'dark' : 'light';
     }
     applyTheme(savedTheme);
-    if (savedTheme === 'dark') {
-        themeToggle.checked = true;
+
+    if (!themeToggle) {
+        return;
     }
 
-    // Event listener for theme toggle switch
+    themeToggle.checked = savedTheme === 'dark';
     themeToggle.addEventListener('change', function () {
         if (this.checked) {
             applyTheme('dark');
@@ -276,74 +380,4 @@ document.addEventListener('DOMContentLoaded', function () {
             localStorage.setItem('theme', 'light');
         }
     });
-});
-
-const fine_tune_at = document.getElementById('fine_tune_at');
-const fineTuneAtOutput = document.getElementById('fineTuneAtOutput');
-fine_tune_at.addEventListener('input', function() {
-    fineTuneAtOutput.textContent = fine_tune_at.value;
-});
-
-const epochs = document.getElementById('epochs');
-const epochsOutput = document.getElementById('epochsOutput');
-epochs.addEventListener('input', function() {
-    epochsOutput.textContent = epochs.value;
-});
-
-const fine_tune_epochs = document.getElementById('fine_tune_epochs');
-const fineTuneEpochsOutput = document.getElementById('fineTuneEpochsOutput');
-fine_tune_epochs.addEventListener('input', function() {
-    fineTuneEpochsOutput.textContent = fine_tune_epochs.value;
-});
-
-$(document).ready(function() {
-    // Function to fetch retraining status
-    function fetchRetrainingStatus() {
-        $.ajax({
-            url: '/status',
-            type: 'GET',
-            dataType: 'json',
-            success: function(data) {
-                // Update retraining status
-                $('#retraining-status').text(data.retraining);
-                
-                // Update last trained time
-                $('#last-trained').text(data.last_trained || 'Never');
-                
-                // Update images used
-                $('#images-used').text(data.images_used || 0);
-                
-                // Handle error messages
-                if(data.error) {
-                    $('#error-message').text('Error: ' + data.error);
-                } else {
-                    $('#error-message').text('');
-                }
-
-                // Disable or enable retrain button based on retraining status
-                if(data.retraining) {
-                    $('button[type="submit"]').attr('disabled', true).text('Retraining...');
-                } else {
-                    $('button[type="submit"]').attr('disabled', false).text('Start Retraining');
-                }
-
-                // Update retraining output
-                $("#retraining-output").text(data.output);
-                // Auto-scroll to the bottom
-                $("#retraining-output").scrollTop($("#retraining-output")[0].scrollHeight);
-            },
-            error: function(xhr, status, error) {
-                console.error('Failed to fetch retraining status:', error);
-                $('#error-message').text('Failed to fetch retraining status.');
-                // Optionally, keep the retrain button enabled
-                $('button[type="submit"]').attr('disabled', false).text('Start Retraining');
-            }
-        });
-    }
-
-    // Initial fetch when the page loads
-    fetchRetrainingStatus();
-
-    // Poll the status every 5 seconds (5000 milliseconds)
-    setInterval(fetchRetrainingStatus, 5000);
 });

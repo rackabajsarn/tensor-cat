@@ -14,7 +14,7 @@ The system automatically trains both models and compares their performance for c
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                          tensor-cat Server                        │
-│                      (Raspberry Pi + Coral TPU)                   │
+│                        (Linux + Coral TPU)                        │
 │                                                                    │
 │  1. Trains MobileNetV2 (224x224, 5 classes)                      │
 │  2. Trains Simple CNN (96x96, 3 classes)                         │
@@ -145,6 +145,38 @@ Add ESP32 IP address:
 ESP32_IP = '192.168.1.14'  # Your ESP32 IP
 ```
 
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOCAL_OFFLINE_MODE` | `0` | Set to `1` for local development without Coral TPU/MQTT |
+
+**Offline Mode** disables:
+- MQTT listener and publishing
+- Coral TPU inference (returns dummy class)
+- ESP32 model upload
+
+**Offline Mode keeps working:**
+- Web UI for labeling and training
+- Model versioning (save/load/activate/delete)
+- Local model training
+- All report viewing
+
+**Usage:**
+```bash
+# Windows CMD
+set LOCAL_OFFLINE_MODE=1
+python app.py
+
+# PowerShell
+$env:LOCAL_OFFLINE_MODE="1"
+python app.py
+
+# Linux/Mac
+export LOCAL_OFFLINE_MODE=1
+python app.py
+```
+
 ### ESP32 `platformio.ini`
 Dependencies added:
 - `ESP Async WebServer` - For HTTP model upload
@@ -187,6 +219,70 @@ Add sensors for:
 - `sensor.cat_flap_esp32_inference`
 - `sensor.cat_flap_server_inference`
 - `sensor.cat_flap_inference_comparison`
+
+---
+
+## Flask Service (Server)
+
+The tensor-cat Flask app runs as a systemd service on the server.
+
+### Service Configuration
+
+**Service file location:** `/etc/systemd/system/flaskapp.service`
+
+**Virtual environment:**
+- Python: `/venv/coral/bin/python`
+- Activate: `source /venv/coral/bin/activate`
+
+### Updating the Flask Application
+
+1. **Make your changes** to `app.py`, templates, or other files
+
+2. **Restart the service:**
+   ```bash
+   sudo systemctl restart flaskapp
+   ```
+   If you modified the service file itself:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart flaskapp
+   ```
+
+3. **Check service status:**
+   ```bash
+   sudo systemctl status flaskapp
+   ```
+
+4. **Clear browser cache** (for static file changes):
+   - Hard refresh: `Ctrl+F5`
+   - Or clear cache manually
+
+### Testing Changes Locally
+
+Before restarting the service, test changes manually:
+```bash
+source /venv/coral/bin/activate
+python /home/app/app.py
+```
+
+### Monitoring Logs
+
+View service logs for debugging:
+```bash
+journalctl -xe -u flaskapp
+```
+
+Follow logs in real-time:
+```bash
+journalctl -f -u flaskapp
+```
+
+### Tips
+
+- **Minimize downtime**: Schedule updates during low-activity periods
+- **Test first**: Run manually before restarting the service
+- **Monitor logs**: Watch for errors after updates
+- **Static files**: Browser may cache CSS/JS - use hard refresh
 
 ---
 
@@ -315,6 +411,6 @@ sensor:
 ## Credits
 Implementation for LocalAI branch integrating:
 - TensorFlow Lite Micro on ESP32
-- Google Coral TPU on Raspberry Pi
+- Google Coral TPU on Linux server
 - Dual-stage inference with comparison
 - Automated model training and deployment

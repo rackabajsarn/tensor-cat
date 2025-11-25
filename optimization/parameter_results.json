@@ -1,0 +1,292 @@
+{
+    "results": [
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.917391324043274,
+            "avg_f1_score_prey": 0.9482517482517482
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 130,
+            "avg_accuracy": 0.9239130616188049,
+            "avg_f1_score_prey": 0.914918414918415
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 135,
+            "avg_accuracy": 0.917391324043274,
+            "avg_f1_score_prey": 0.9384615384615383
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 5e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9195652365684509,
+            "avg_f1_score_prey": 0.8493772893772894
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 5e-06,
+            "fine_tune_at": 130,
+            "avg_accuracy": 0.9065217614173889,
+            "avg_f1_score_prey": 0.8939060939060939
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 5e-06,
+            "fine_tune_at": 135,
+            "avg_accuracy": 0.9130434989929199,
+            "avg_f1_score_prey": 0.8967032967032967
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 3e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9195652365684509,
+            "avg_f1_score_prey": 0.8919413919413918
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 3e-06,
+            "fine_tune_at": 130,
+            "avg_accuracy": 0.9152174115180969,
+            "avg_f1_score_prey": 0.8287545787545787
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 3e-06,
+            "fine_tune_at": 135,
+            "avg_accuracy": 0.9152174115180969,
+            "avg_f1_score_prey": 0.9205128205128205
+        },
+        {
+            "epochs": 11,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9086956739425659,
+            "avg_f1_score_prey": 0.9328671328671329
+        },
+        {
+            "epochs": 11,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 130,
+            "avg_accuracy": 0.902173924446106,
+            "avg_f1_score_prey": 0.8541391941391941
+        },
+        {
+            "epochs": 11,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 135,
+            "avg_accuracy": 0.917391324043274,
+            "avg_f1_score_prey": 0.8843822843822844
+        },
+        {
+            "epochs": 11,
+            "fine_tune_epochs": 6,
+            "learning_rate": 5e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9130434989929199,
+            "avg_f1_score_prey": 0.8884615384615383
+        },
+        {
+            "epochs": 11,
+            "fine_tune_epochs": 6,
+            "learning_rate": 5e-06,
+            "fine_tune_at": 130,
+            "avg_accuracy": 0.9239130616188049,
+            "avg_f1_score_prey": 0.9356643356643355
+        },
+        {
+            "epochs": 11,
+            "fine_tune_epochs": 6,
+            "learning_rate": 5e-06,
+            "fine_tune_at": 135,
+            "avg_accuracy": 0.9086956739425659,
+            "avg_f1_score_prey": 0.9356643356643357
+        },
+        {
+            "epochs": 11,
+            "fine_tune_epochs": 6,
+            "learning_rate": 3e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9130434989929199,
+            "avg_f1_score_prey": 0.9328671328671329
+        },
+        {
+            "epochs": 11,
+            "fine_tune_epochs": 6,
+            "learning_rate": 3e-06,
+            "fine_tune_at": 130,
+            "avg_accuracy": 0.9195652365684509,
+            "avg_f1_score_prey": 0.8653346653346654
+        },
+        {
+            "epochs": 11,
+            "fine_tune_epochs": 6,
+            "learning_rate": 3e-06,
+            "fine_tune_at": 135,
+            "avg_accuracy": 0.921739149093628,
+            "avg_f1_score_prey": 0.8923076923076921
+        },
+        {
+            "epochs": 12,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9152174115180969,
+            "avg_f1_score_prey": 0.842809364548495
+        },
+        {
+            "epochs": 12,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 130,
+            "avg_accuracy": 0.921739149093628,
+            "avg_f1_score_prey": 0.9098901098901099
+        },
+        {
+            "epochs": 12,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 135,
+            "avg_accuracy": 0.917391324043274,
+            "avg_f1_score_prey": 0.8752747252747252
+        },
+        {
+            "epochs": 12,
+            "fine_tune_epochs": 6,
+            "learning_rate": 5e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.910869586467743,
+            "avg_f1_score_prey": 0.9025641025641026
+        },
+        {
+            "epochs": 12,
+            "fine_tune_epochs": 6,
+            "learning_rate": 5e-06,
+            "fine_tune_at": 130,
+            "avg_accuracy": 0.9130434989929199,
+            "avg_f1_score_prey": 0.923076923076923
+        },
+        {
+            "epochs": 12,
+            "fine_tune_epochs": 6,
+            "learning_rate": 5e-06,
+            "fine_tune_at": 135,
+            "avg_accuracy": 0.9130434989929199,
+            "avg_f1_score_prey": 0.884033613445378
+        },
+        {
+            "epochs": 12,
+            "fine_tune_epochs": 6,
+            "learning_rate": 3e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9195652365684509,
+            "avg_f1_score_prey": 0.9051282051282051
+        },
+        {
+            "epochs": 12,
+            "fine_tune_epochs": 6,
+            "learning_rate": 3e-06,
+            "fine_tune_at": 130,
+            "avg_accuracy": 0.921739149093628,
+            "avg_f1_score_prey": 0.8645288045288044
+        },
+        {
+            "epochs": 12,
+            "fine_tune_epochs": 6,
+            "learning_rate": 3e-06,
+            "fine_tune_at": 135,
+            "avg_accuracy": 0.917391324043274,
+            "avg_f1_score_prey": 0.8984615384615384
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9086956739425659,
+            "avg_f1_score_prey": 0.907092907092907
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 8e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9152174115180969,
+            "avg_f1_score_prey": 0.9538461538461537
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 9e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.910869586467743,
+            "avg_f1_score_prey": 0.8647619047619048
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 1e-05,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9239130616188049,
+            "avg_f1_score_prey": 0.914918414918415
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9086956679821014,
+            "avg_f1_score_prey": 0.8657897004955828
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 7e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9130434989929199,
+            "avg_f1_score_prey": 0.8668797868797868
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 8e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9163043677806855,
+            "avg_f1_score_prey": 0.9266899766899768
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 9e-06,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9097826302051544,
+            "avg_f1_score_prey": 0.9195720945720947
+        },
+        {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": 1e-05,
+            "fine_tune_at": 120,
+            "avg_accuracy": 0.9152174115180969,
+            "avg_f1_score_prey": 0.8901265401265401
+        }
+    ]
+}

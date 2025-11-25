@@ -9,14 +9,28 @@ import shutil
 import time
 import subprocess
 import numpy as np
+import copy
+import sys
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory
 from paho.mqtt import client as mqtt_client
 import piexif
 from PIL import Image
-from pycoral.utils.edgetpu import make_interpreter
-from pycoral.adapters.common import set_input
-from pycoral.adapters.classify import get_classes
 from PIL import ImageOps
+
+OFFLINE_MODE = os.environ.get('LOCAL_OFFLINE_MODE', '0') == '1'
+
+try:
+    if OFFLINE_MODE:
+        raise ImportError("Offline mode active")
+    from pycoral.utils.edgetpu import make_interpreter
+    from pycoral.adapters.common import set_input
+    from pycoral.adapters.classify import get_classes
+    PY_CORAL_AVAILABLE = True
+except ImportError:
+    make_interpreter = None
+    set_input = None
+    get_classes = None
+    PY_CORAL_AVAILABLE = False
 
 app = Flask(__name__)
 app.secret_key = credentials.SECRET_KEY
@@ -32,25 +46,312 @@ DATASET_IMAGES_DIR = 'dataset/images'
 MODEL_DIR = 'model'
 MODEL_NAME = 'my_model_quant_edgetpu.tflite'
 MODEL_INFO_PATH = 'model_info.json'
+MODELS_DIR = 'models'
+SERVER_MODELS_DIR = os.path.join(MODELS_DIR, 'server')
+LOCAL_MODELS_DIR = os.path.join(MODELS_DIR, 'local')
+ACTIVE_MODEL_FILE = os.path.join(MODELS_DIR, 'active.json')
+
+# Ensure model directories exist
+os.makedirs(SERVER_MODELS_DIR, exist_ok=True)
+os.makedirs(LOCAL_MODELS_DIR, exist_ok=True)
+
+SERVER_PARAM_DEFAULTS = {
+    "epochs": 10,
+    "fine_tune_epochs": 5,
+    "learning_rate": '1e-5',
+    "fine_tune_at": 120
+}
+
+LOCAL_PARAM_DEFAULTS = {
+    "epochs": 40,
+    "learning_rate": '1e-3',
+    "batch_size": 32,
+    "seed": 0
+}
+
+# Valid parameter ranges for local model training
+LOCAL_PARAM_LIMITS = {
+    "epochs": {"min": 10, "max": 120, "step": 5},
+    "learning_rate": ['5e-4', '7.5e-4', '1e-3', '1.5e-3', '2e-3', '3e-3', '5e-3'],
+    "batch_size": [16, 32, 48, 64],
+    "seed": {"min": 0, "max": 999999}
+}
+
+
+def default_section(params_defaults):
+    return {
+        "last_trained": "Never",
+        "images_used": 0,
+        "retraining": False,
+        "training_params": copy.deepcopy(params_defaults)
+    }
+
+
+def get_active_models():
+    """Get currently active model versions for server and local."""
+    if os.path.exists(ACTIVE_MODEL_FILE):
+        try:
+            with open(ACTIVE_MODEL_FILE, 'r') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"server": None, "local": None}
+
+
+def set_active_model(scope, version_name):
+    """Set the active model version for a scope (server/local)."""
+    active = get_active_models()
+    active[scope] = version_name
+    with open(ACTIVE_MODEL_FILE, 'w') as f:
+        json.dump(active, f)
+
+
+def save_model_version(scope, timestamp_str):
+    """Save current model and reports as a new version."""
+    if scope == 'server':
+        models_dir = SERVER_MODELS_DIR
+        reports_src = os.path.join(app.static_folder, 'reports')
+        model_src_dir = MODEL_DIR
+        model_files = [MODEL_NAME]  # Server Coral TPU model
+    else:
+        models_dir = LOCAL_MODELS_DIR
+        reports_src = os.path.join(app.static_folder, 'reports', 'simple')
+        model_src_dir = 'simple_model'
+        model_files = [
+            'my_simple_model_quant.tflite',
+            'my_simple_model_quant.cc',
+            'my_simple_model_quant.h',
+            'best_model.keras'
+        ]
+
+    version_dir = os.path.join(models_dir, timestamp_str)
+    os.makedirs(version_dir, exist_ok=True)
+
+    # Copy model files
+    model_dest_dir = os.path.join(version_dir, 'model')
+    os.makedirs(model_dest_dir, exist_ok=True)
+    for model_file in model_files:
+        src_path = os.path.join(model_src_dir, model_file)
+        if os.path.exists(src_path):
+            shutil.copy2(src_path, os.path.join(model_dest_dir, model_file))
+
+    # Copy reports
+    reports_dest = os.path.join(version_dir, 'reports')
+    if os.path.exists(reports_src):
+        if os.path.exists(reports_dest):
+            shutil.rmtree(reports_dest)
+        shutil.copytree(reports_src, reports_dest)
+
+    # Extract key metrics from classification report
+    metrics = extract_model_metrics(os.path.join(reports_dest, 'classification_report.html'))
+    
+    # Save metadata
+    metadata = {
+        "timestamp": timestamp_str,
+        "created": datetime.datetime.now().isoformat(),
+        "metrics": metrics
+    }
+    with open(os.path.join(version_dir, 'metadata.json'), 'w') as f:
+        json.dump(metadata, f, indent=2)
+
+    return version_dir
+
+
+def extract_model_metrics(report_path):
+    """Extract key metrics (accuracy, macro avg) from classification report."""
+    rows = parse_classification_report(report_path)
+    if not rows:
+        return {}
+    
+    metrics = {}
+    for row in rows:
+        if len(row) >= 2:
+            first_cell = row[0].lower().strip()
+            # Check for accuracy row (usually "Accuracy" in first cells, value in last)
+            if 'accuracy' in first_cell:
+                # Find accuracy value - usually the last non-empty cell
+                for cell in reversed(row):
+                    try:
+                        val = float(cell)
+                        metrics['accuracy'] = val
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            # Check for macro avg F1
+            elif 'f1' in first_cell and 'score' in first_cell:
+                for cell in row[1:]:
+                    try:
+                        val = float(cell)
+                        metrics['macro_f1'] = val
+                        break
+                    except (ValueError, TypeError):
+                        continue
+    
+    return metrics
+
+
+def list_model_versions(scope):
+    """List all saved model versions for a scope."""
+    models_dir = SERVER_MODELS_DIR if scope == 'server' else LOCAL_MODELS_DIR
+    versions = []
+    
+    if not os.path.exists(models_dir):
+        return versions
+    
+    for name in sorted(os.listdir(models_dir), reverse=True):
+        version_dir = os.path.join(models_dir, name)
+        if not os.path.isdir(version_dir):
+            continue
+        
+        metadata_path = os.path.join(version_dir, 'metadata.json')
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+                    metadata['name'] = name
+                    metadata['path'] = version_dir
+                    versions.append(metadata)
+            except Exception as e:
+                logging.error(f"Error loading metadata for {name}: {e}")
+                versions.append({
+                    'name': name,
+                    'path': version_dir,
+                    'timestamp': name,
+                    'metrics': {}
+                })
+        else:
+            versions.append({
+                'name': name,
+                'path': version_dir,
+                'timestamp': name,
+                'metrics': {}
+            })
+    
+    return versions
+
+
+def get_model_version_details(scope, version_name):
+    """Get full details for a specific model version."""
+    models_dir = SERVER_MODELS_DIR if scope == 'server' else LOCAL_MODELS_DIR
+    version_dir = os.path.join(models_dir, version_name)
+    
+    if not os.path.exists(version_dir):
+        return None
+    
+    details = {
+        'name': version_name,
+        'path': version_dir
+    }
+    
+    # Load metadata
+    metadata_path = os.path.join(version_dir, 'metadata.json')
+    if os.path.exists(metadata_path):
+        with open(metadata_path, 'r') as f:
+            details.update(json.load(f))
+    
+    # Load classification report data
+    report_path = os.path.join(version_dir, 'reports', 'classification_report.html')
+    details['classification_data'] = parse_classification_report(report_path)
+    
+    # Load model summary
+    summary_path = os.path.join(version_dir, 'reports', 'model_summary.txt')
+    details['model_summary'] = read_model_summary(summary_path)
+    
+    return details
+
+
+def parse_classification_report(html_path):
+    """Parse classification_report.html and return structured data."""
+    if not os.path.exists(html_path):
+        return None
+    try:
+        from html.parser import HTMLParser
+        
+        class ReportParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.rows = []
+                self.current_row = []
+                self.current_cell = ""
+                self.in_td = False
+                self.in_th = False
+                
+            def handle_starttag(self, tag, attrs):
+                if tag == 'tr':
+                    self.current_row = []
+                elif tag in ('td', 'th'):
+                    self.in_td = tag == 'td'
+                    self.in_th = tag == 'th'
+                    self.current_cell = ""
+                    
+            def handle_endtag(self, tag):
+                if tag == 'tr' and self.current_row:
+                    self.rows.append(self.current_row)
+                elif tag in ('td', 'th'):
+                    self.current_row.append(self.current_cell.strip())
+                    self.in_td = False
+                    self.in_th = False
+                    
+            def handle_data(self, data):
+                if self.in_td or self.in_th:
+                    self.current_cell += data
+        
+        with open(html_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        parser = ReportParser()
+        parser.feed(content)
+        return parser.rows
+    except Exception as e:
+        logging.error(f"Error parsing classification report: {e}")
+        return None
+
+
+def read_model_summary(txt_path):
+    """Read model summary text file."""
+    if not os.path.exists(txt_path):
+        return None
+    try:
+        with open(txt_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        logging.error(f"Error reading model summary: {e}")
+        return None
+
+
+def default_model_info():
+    return {
+        "server": default_section(SERVER_PARAM_DEFAULTS),
+        "local": default_section(LOCAL_PARAM_DEFAULTS)
+    }
 
 # Shared state
-retraining_status = {
-    'retraining': False,
-    'error': None,
-    'last_trained': None,
-    'images_used': 0,
-    'output': "",
-    'progress': 0,  # Add progress key
-    'completed': False  # Add completed flag
-}
+def make_status_dict():
+    return {
+        'retraining': False,
+        'error': None,
+        'last_trained': None,
+        'images_used': 0,
+        'output': "",
+        'progress': 0,
+        'completed': False
+    }
+
+
+retraining_status = make_status_dict()
+local_retraining_status = make_status_dict()
 
 
 # Ensure directories exist
 os.makedirs(STATIC_IMAGES_DIR, exist_ok=True)
 os.makedirs(DATASET_IMAGES_DIR, exist_ok=True)
 
+LOG_DIR = os.environ.get('TENSOR_CAT_LOG_DIR', os.path.join(os.getcwd(), 'logs'))
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, 'app.log')
+
 logging.basicConfig(
-    filename='/home/tensor-cat/logs/app.log',
+    filename=LOG_FILE,
     level=logging.INFO,
     format='%(asctime)s %(levelname)s:%(message)s'
 )
@@ -65,8 +366,25 @@ logging.info('Application started.')
 interpreter = None
 model_lock = threading.Lock()
 
+
+def read_json_file(path, default=None):
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default if default is not None else {}
+
+
+def static_asset_exists(relative_path):
+    normalized = relative_path.replace('/', os.sep)
+    return os.path.exists(os.path.join(app.static_folder, normalized))
+
 def load_model():
     global interpreter
+    if OFFLINE_MODE or not PY_CORAL_AVAILABLE:
+        logging.info("Offline mode or missing Coral libraries; skipping model load.")
+        interpreter = None
+        return
     model_path = os.path.join(MODEL_DIR, MODEL_NAME)
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found at {model_path}")
@@ -80,7 +398,10 @@ def load_model():
         print("Model loaded successfully.")
 
 # Initial model loading at startup
-load_model()
+if not OFFLINE_MODE and PY_CORAL_AVAILABLE:
+    load_model()
+else:
+    logging.info("Application running in offline mode; Edge TPU inference disabled.")
 
 # Classes mapping
 CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
@@ -183,6 +504,9 @@ def mqtt_on_message(client, userdata, msg):
         logging.error(f"Error processing message: {e}")
 
 def mqtt_listen():
+    if OFFLINE_MODE:
+        logging.info("Offline mode - MQTT listener disabled.")
+        return
     client = mqtt_client.Client()
     client.on_connect = mqtt_on_connect
     client.on_message = mqtt_on_message
@@ -190,10 +514,13 @@ def mqtt_listen():
     client.connect(MQTT_BROKER, MQTT_PORT, 60)
     client.loop_forever()
 
-# Start MQTT client in a separate thread
-mqtt_thread = threading.Thread(target=mqtt_listen)
-mqtt_thread.daemon = True
-mqtt_thread.start()
+# Start MQTT client in a separate thread (only when online)
+if not OFFLINE_MODE:
+    mqtt_thread = threading.Thread(target=mqtt_listen)
+    mqtt_thread.daemon = True
+    mqtt_thread.start()
+else:
+    logging.info("MQTT communication disabled for offline testing.")
 
 # Helper Functions
 
@@ -264,9 +591,11 @@ def classify_image(image_path):
         # Add batch dimension
         image = np.expand_dims(image, axis=0)
         
+        if OFFLINE_MODE or not interpreter or not PY_CORAL_AVAILABLE:
+            logging.debug("Offline mode - returning default classification")
+            return 0
+
         with model_lock:
-            if not interpreter:
-                return jsonify({'success': False, 'message': 'Model not loaded.'}), 500
             # Set the input tensor
             set_input(interpreter, image)
 
@@ -285,11 +614,16 @@ def classify_image(image_path):
 
 retrain_lock = threading.Lock()
 
+local_retrain_lock = threading.Lock()
+
 retraining = False
 
 def upload_model_to_esp32():
     """Upload the simple TFLite model to ESP32 via HTTP"""
     try:
+        if OFFLINE_MODE:
+            logging.info("Offline mode - skipping ESP32 model upload.")
+            return False
         model_path = os.path.join('simple_model', 'my_simple_model_quant.tflite')
         if not os.path.exists(model_path):
             logging.error(f"Simple model file not found at {model_path}")
@@ -350,7 +684,6 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
         # Path to the virtual environment's Python interpreter
         VENV_PATH = '/venv/coral'  # Adjust as per your virtual environment's path
         train_script_path = os.path.join(os.getcwd(), 'train_model.py')
-        train_simple_script_path = os.path.join(os.getcwd(), 'train_simple_model.py')
         python_executable = os.path.join(VENV_PATH, 'bin', 'python')
         
         # Build the command for main Coral TPU model
@@ -380,10 +713,12 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
                 break
             line = line.strip()  # Remove leading/trailing whitespace
             if 'PROGRESS:' in line:
-                # Extract progress value (scale to 50% for first phase)
-                progress_value = int(line.split('PROGRESS:')[-1]) // 2
-                retraining_status['progress'] = progress_value
-                logging.info(f'Coral TPU retraining progress: {progress_value}%')
+                try:
+                    progress_value = int(line.split('PROGRESS:')[-1])
+                    retraining_status['progress'] = max(0, min(100, progress_value))
+                    logging.info(f'Retraining progress: {progress_value}%')
+                except ValueError:
+                    logging.debug(f"Unable to parse progress line: {line}")
             else:
                 # Regular output
                 retraining_status['output'] += line + '\n'
@@ -406,70 +741,30 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
             retraining_status['retraining'] = False
             return
         
-        # Now train the simple ESP32 model
-        retraining_status['output'] += "\n=== Training ESP32 Simple Model ===\n"
-        simple_command = [
-            python_executable,
-            train_simple_script_path,
-            '--epochs', str(40),  # More epochs for simple model
-            '--learning_rate', '1e-3'  # Higher learning rate for custom CNN
-        ]
-        
-        simple_process = subprocess.Popen(
-            simple_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+        # Coral retraining completed successfully
+        retraining_status['last_trained'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        retraining_status['images_used'] = count_current_dataset_images()
+        retraining_status['completed'] = True
+        retraining_status['progress'] = 100
+
+        # Save this as a new model version (but don't activate - user must select)
+        timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        try:
+            save_model_version('server', timestamp_str)
+            logging.info(f"Saved server model version: {timestamp_str}")
+        except Exception as e:
+            logging.error(f"Failed to save model version: {e}")
+
+        update_model_info(
+            last_trained=retraining_status['last_trained'],
+            images_used=retraining_status['images_used'],
+            retraining=False,
+            epochs=epochs,
+            fine_tune_epochs=fine_tune_epochs,
+            learning_rate=learning_rate,
+            fine_tune_at=fine_tune_at
         )
-        
-        logging.info("ESP32 simple model training process started.")
-        while True:
-            line = simple_process.stdout.readline()
-            if not line:
-                break
-            line = line.strip()
-            if 'PROGRESS:' in line:
-                # Extract progress value (scale to 50-100% for second phase)
-                progress_value = 50 + (int(line.split('PROGRESS:')[-1]) // 2)
-                retraining_status['progress'] = progress_value
-                logging.info(f'ESP32 model retraining progress: {progress_value}%')
-            else:
-                retraining_status['output'] += line + '\n'
-                logging.info(line)
-        simple_process.stdout.close()
-        simple_return_code = simple_process.wait()
-        
-        # Read any remaining stderr
-        simple_stderr = simple_process.stderr.read()
-        if simple_stderr:
-            logging.error(simple_stderr.strip())
-            retraining_status['output'] += simple_stderr
-        simple_process.stderr.close()
-        
-        if simple_return_code == 0:
-            # Both models trained successfully
-            retraining_status['last_trained'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            retraining_status['images_used'] = count_current_dataset_images()
-            retraining_status['completed'] = True
-            update_model_info(
-                last_trained=retraining_status['last_trained'],
-                images_used=retraining_status['images_used'],
-                retraining=False,
-                epochs=epochs,
-                fine_tune_epochs=fine_tune_epochs,
-                learning_rate=learning_rate,
-                fine_tune_at=fine_tune_at
-            )
-            logging.info("Both models retrained successfully.")
-            load_model()  # Reload the Coral TPU model
-            
-            # Upload simple model to ESP32
-            upload_model_to_esp32()
-        else:
-            error_message = f"ESP32 model training failed with return code: {simple_return_code}"
-            logging.error(error_message)
-            retraining_status['error'] = error_message
-            update_model_info(retraining=False)
+        logging.info("Coral TPU model retrained successfully.")
     
     except Exception as e:
         logging.error(f"An error occurred during retraining: {e}")
@@ -478,6 +773,105 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     
     finally:
         retraining_status['retraining'] = False
+
+
+def run_local_retraining(epochs, learning_rate, batch_size, seed):
+    global local_retraining_status
+    with local_retrain_lock:
+        logging.info("Starting local retrain")
+        if local_retraining_status['retraining']:
+            logging.warning("Local retraining is already in progress.")
+            return
+        local_retraining_status['retraining'] = True
+        local_retraining_status['completed'] = False
+        local_retraining_status['error'] = None
+        local_retraining_status['output'] = ""
+        local_retraining_status['progress'] = 0
+        update_model_info(section='local', retraining=True)
+
+    try:
+        python_executable = sys.executable
+        train_simple_script_path = os.path.join(os.getcwd(), 'train_simple_model.py')
+        logging.info("Launching local training script...")
+        command = [
+            python_executable,
+            train_simple_script_path,
+            '--epochs', str(epochs),
+            '--learning_rate', str(learning_rate),
+            '--batch_size', str(batch_size),
+            '--seed', str(seed)
+        ]
+
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break
+            line = line.strip()
+            if 'PROGRESS:' in line:
+                try:
+                    progress_value = int(line.split('PROGRESS:')[-1])
+                    local_retraining_status['progress'] = max(0, min(100, progress_value))
+                except ValueError:
+                    logging.debug(f"Unable to parse local progress line: {line}")
+            else:
+                local_retraining_status['output'] += line + '\n'
+                logging.info(line)
+
+        process.stdout.close()
+        return_code = process.wait()
+
+        stderr = process.stderr.read()
+        if stderr:
+            logging.error(stderr.strip())
+            local_retraining_status['output'] += stderr
+        process.stderr.close()
+
+        if return_code != 0:
+            error_message = f"Local model training failed with return code: {return_code}"
+            logging.error(error_message)
+            local_retraining_status['error'] = error_message
+            update_model_info(section='local', retraining=False)
+            return
+
+        local_retraining_status['last_trained'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        local_retraining_status['images_used'] = count_current_dataset_images()
+        local_retraining_status['completed'] = True
+        local_retraining_status['progress'] = 100
+
+        # Save this as a new model version (but don't activate - user must select)
+        timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        try:
+            save_model_version('local', timestamp_str)
+            logging.info(f"Saved local model version: {timestamp_str}")
+        except Exception as e:
+            logging.error(f"Failed to save model version: {e}")
+
+        update_model_info(
+            section='local',
+            last_trained=local_retraining_status['last_trained'],
+            images_used=local_retraining_status['images_used'],
+            retraining=False,
+            epochs=epochs,
+            learning_rate=learning_rate,
+            batch_size=batch_size,
+            seed=seed
+        )
+        logging.info("Local model retrained successfully.")
+
+    except Exception as e:
+        logging.error(f"An error occurred during local retraining: {e}")
+        local_retraining_status['error'] = str(e)
+        update_model_info(section='local', retraining=False)
+
+    finally:
+        local_retraining_status['retraining'] = False
 
 
 def count_current_dataset_images():
@@ -515,68 +909,75 @@ def update_last_trained():
     with open(MODEL_INFO_PATH, 'w') as f:
         json.dump(data, f)
 
+def _ensure_section(data, section, defaults):
+    if section not in data or not isinstance(data[section], dict):
+        data[section] = default_section(defaults)
+    section_data = data[section]
+    section_data.setdefault('last_trained', 'Never')
+    section_data.setdefault('images_used', 0)
+    section_data.setdefault('retraining', False)
+    training_params = section_data.setdefault('training_params', {})
+    for key, value in defaults.items():
+        training_params.setdefault(key, value)
+    return section_data
+
+
 def get_model_info():
+    data = default_model_info()
     try:
         with open(MODEL_INFO_PATH, 'r') as f:
-            data = json.load(f)
-            # Ensure 'training_params' exists
-            if 'training_params' not in data:
-                data['training_params'] = {
-                    "epochs": 10,
-                    "fine_tune_epochs": 5,
-                    "learning_rate": '1e-5',
-                    "fine_tune_at": 120
-                }
-            return data
-    except FileNotFoundError:
-        return {
-            "last_trained": "Never",
-            "images_used": 0,
-            "training_params": {
-                "epochs": 10,
-                "fine_tune_epochs": 5,
-                "learning_rate": '1e-5',
-                "fine_tune_at": 120
-            }
-        }
-    except json.JSONDecodeError:
-        return {
-            "last_trained": "Never",
-            "images_used": 0,
-            "training_params": {
-                "epochs": 10,
-                "fine_tune_epochs": 5,
-                "learning_rate": '1e-5',
-                "fine_tune_at": 120
-            }
-        }
-
-
-def update_model_info(last_trained=None, images_used=None, retraining=None, epochs=None, fine_tune_epochs=None, learning_rate=None, fine_tune_at=None):
-    try:
-        with open(MODEL_INFO_PATH, 'r') as f:
-            data = json.load(f)
+            file_data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        data = {
-            "last_trained": "Never",
-            "images_used": 0,
-            "retraining": False,
-            "training_params": {}
+        file_data = {}
+
+    # Backwards compatibility for legacy structure
+    if 'server' not in file_data and 'last_trained' in file_data:
+        legacy = {
+            'last_trained': file_data.get('last_trained', 'Never'),
+            'images_used': file_data.get('images_used', 0),
+            'retraining': file_data.get('retraining', False),
+            'training_params': file_data.get('training_params', {})
         }
+        file_data = {'server': legacy}
+
+    data.update(file_data)
+    _ensure_section(data, 'server', SERVER_PARAM_DEFAULTS)
+    _ensure_section(data, 'local', LOCAL_PARAM_DEFAULTS)
+    return data
+
+
+def update_model_info(section='server', last_trained=None, images_used=None, retraining=None,
+                      epochs=None, fine_tune_epochs=None, learning_rate=None, fine_tune_at=None,
+                      batch_size=None, seed=None):
+    data = get_model_info()
+    section_defaults = SERVER_PARAM_DEFAULTS if section == 'server' else LOCAL_PARAM_DEFAULTS
+    section_data = _ensure_section(data, section, section_defaults)
 
     if last_trained is not None:
-        data['last_trained'] = last_trained
+        section_data['last_trained'] = last_trained
     if images_used is not None:
-        data['images_used'] = images_used
+        section_data['images_used'] = images_used
     if retraining is not None:
-        data['retraining'] = retraining
-    if epochs is not None or fine_tune_epochs is not None or learning_rate is not None or fine_tune_at is not None:
-        data['training_params'] = {
-            "epochs": epochs if epochs is not None else data.get('training_params', {}).get('epochs', 10),
-            "fine_tune_epochs": fine_tune_epochs if fine_tune_epochs is not None else data.get('training_params', {}).get('fine_tune_epochs', 10),
-            "learning_rate": learning_rate if learning_rate is not None else data.get('training_params', {}).get('learning_rate', '1e-3'),
-            "fine_tune_at": fine_tune_at if fine_tune_at is not None else data.get('training_params', {}).get('fine_tune_at', 150)
-        }
+        section_data['retraining'] = retraining
+
+    params = section_data.setdefault('training_params', {})
+
+    if epochs is not None:
+        params['epochs'] = epochs
+    if section == 'server':
+        if fine_tune_epochs is not None:
+            params['fine_tune_epochs'] = fine_tune_epochs
+        if learning_rate is not None:
+            params['learning_rate'] = learning_rate
+        if fine_tune_at is not None:
+            params['fine_tune_at'] = fine_tune_at
+    else:
+        if learning_rate is not None:
+            params['learning_rate'] = learning_rate
+        if batch_size is not None:
+            params['batch_size'] = batch_size
+        if seed is not None:
+            params['seed'] = seed
 
     try:
         with open(MODEL_INFO_PATH, 'w') as f:
@@ -722,41 +1123,291 @@ def send_image(mode, filename):
 
 @app.route('/model')
 def model():
-    # Load class weights
-    class_weights_filename = os.path.join('static', 'reports', 'class_weights.json')
-    with open(class_weights_filename, 'r') as f:
-        class_weights = json.load(f)
+    server_weights_path = os.path.join(app.static_folder, 'reports', 'class_weights.json')
+    local_weights_path = os.path.join(app.static_folder, 'reports', 'simple', 'class_weights.json')
+
+    class_weights_server = read_json_file(server_weights_path, {})
+    class_weights_local = read_json_file(local_weights_path, {})
+
     model_info = get_model_info()
-    last_trained = model_info.get('last_trained', 'Never')
-    images_used = model_info.get('images_used', 0)
+    server_info = model_info.get('server', default_section(SERVER_PARAM_DEFAULTS))
+    local_info = model_info.get('local', default_section(LOCAL_PARAM_DEFAULTS))
+
     current_dataset_images = count_current_dataset_images()
-    # Class names
     class_names = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
+    local_class_names = ['not_cat', 'not_prey', 'prey']
+
+    learning_rates_server = ['5e-6', '6e-6', '7e-6', '8e-6', '9e-6', '1e-5', '2e-5', '3e-5', '4e-5', '5e-5']
+    learning_rates_local = ['5e-4', '7.5e-4', '1e-3', '1.5e-3', '2e-3', '3e-3', '5e-3']
+    batch_size_options = [16, 32, 48, 64]
+
+    server_reports = {
+        'classification': static_asset_exists('reports/classification_report.html'),
+        'confusion': static_asset_exists('reports/images/confusion_matrix.png'),
+        'accuracy': static_asset_exists('reports/images/accuracy_plot.png'),
+        'loss': static_asset_exists('reports/images/loss_plot.png'),
+        'summary': static_asset_exists('reports/model_summary.txt')
+    }
+
+    local_reports = {
+        'classification': static_asset_exists('reports/simple/classification_report.html'),
+        'confusion': static_asset_exists('reports/simple/images/confusion_matrix.png'),
+        'accuracy': static_asset_exists('reports/simple/images/accuracy_plot.png'),
+        'loss': static_asset_exists('reports/simple/images/loss_plot.png'),
+        'summary': static_asset_exists('reports/simple/model_summary.txt')
+    }
+
+    # Parse classification reports and model summaries
+    server_classification_data = parse_classification_report(
+        os.path.join(app.static_folder, 'reports', 'classification_report.html')
+    )
+    local_classification_data = parse_classification_report(
+        os.path.join(app.static_folder, 'reports', 'simple', 'classification_report.html')
+    )
+    server_model_summary = read_model_summary(
+        os.path.join(app.static_folder, 'reports', 'model_summary.txt')
+    )
+    local_model_summary = read_model_summary(
+        os.path.join(app.static_folder, 'reports', 'simple', 'model_summary.txt')
+    )
+
+    return render_template(
+        'model.html',
+        mode='model',
+        current_dataset_images=current_dataset_images,
+        retraining_status=retraining_status,
+        local_retraining_status=local_retraining_status,
+        server_info=server_info,
+        local_info=local_info,
+        class_weights_server=class_weights_server,
+        class_weights_local=class_weights_local,
+        class_names=class_names,
+        local_class_names=local_class_names,
+        learning_rates_server=learning_rates_server,
+        learning_rates_local=learning_rates_local,
+        batch_size_options=batch_size_options,
+        server_reports=server_reports,
+        local_reports=local_reports,
+        server_classification_data=server_classification_data,
+        local_classification_data=local_classification_data,
+        server_model_summary=server_model_summary,
+        local_model_summary=local_model_summary,
+        server_versions=list_model_versions('server'),
+        local_versions=list_model_versions('local'),
+        active_models=get_active_models()
+    )
+
+
+@app.route('/model/save/<scope>', methods=['POST'])
+def save_current_model(scope):
+    """API endpoint to manually save the current model as a version."""
+    if scope not in ('server', 'local'):
+        return jsonify({'error': 'Invalid scope'}), 400
     
-    # Get training parameters
-    training_params = model_info.get('training_params', {})
-    epochs = training_params.get('epochs', 10)
-    fine_tune_epochs = training_params.get('fine_tune_epochs', 5)
-    learning_rate = training_params.get('learning_rate', '1e-5')
-    fine_tune_at = training_params.get('fine_tune_at', 120)
+    # Check if model files exist
+    if scope == 'server':
+        model_check_path = os.path.join(MODEL_DIR, MODEL_NAME)
+    else:
+        model_check_path = os.path.join('simple_model', 'my_simple_model_quant.tflite')
     
-    learning_rates = ['5e-6', '6e-6', '7e-6', '8e-6', '9e-6', '1e-5', '2e-5', '3e-5', '4e-5', '5e-5']
+    if not os.path.exists(model_check_path):
+        return jsonify({'error': f'No {scope} model found to save'}), 404
+    
+    try:
+        timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        version_dir = save_model_version(scope, timestamp_str)
+        set_active_model(scope, timestamp_str)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Saved version {timestamp_str}',
+            'version': timestamp_str
+        })
+    except Exception as e:
+        logging.error(f"Failed to save model version: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
-    return render_template('model.html',
-                            mode='model', 
-                            class_weights=class_weights, 
-                            class_names=class_names,
-                            last_trained=last_trained, 
-                            images_used=images_used, 
-                            current_dataset_images=current_dataset_images,
-                            retraining_status=retraining_status,
-                            epochs=epochs,
-                            fine_tune_epochs=fine_tune_epochs,
-                            learning_rate=learning_rate,
-                            fine_tune_at=fine_tune_at,
-                            learning_rates=learning_rates)
+@app.route('/model/versions/<scope>')
+def get_model_versions(scope):
+    """API endpoint to get list of model versions."""
+    if scope not in ('server', 'local'):
+        return jsonify({'error': 'Invalid scope'}), 400
+    
+    versions = list_model_versions(scope)
+    active = get_active_models()
+    
+    return jsonify({
+        'versions': versions,
+        'active': active.get(scope)
+    })
 
+
+@app.route('/model/version/<scope>/<version_name>')
+def get_version_details(scope, version_name):
+    """API endpoint to get full details of a specific version."""
+    if scope not in ('server', 'local'):
+        return jsonify({'error': 'Invalid scope'}), 400
+    
+    details = get_model_version_details(scope, version_name)
+    if not details:
+        return jsonify({'error': 'Version not found'}), 404
+    
+    return jsonify(details)
+
+
+@app.route('/model/activate/<scope>/<version_name>', methods=['POST'])
+def activate_version(scope, version_name):
+    """API endpoint to activate a specific model version."""
+    if scope not in ('server', 'local'):
+        return jsonify({'error': 'Invalid scope'}), 400
+    
+    # Verify the version exists
+    models_dir = SERVER_MODELS_DIR if scope == 'server' else LOCAL_MODELS_DIR
+    version_dir = os.path.join(models_dir, version_name)
+    
+    if not os.path.exists(version_dir):
+        return jsonify({'error': 'Version not found'}), 404
+    
+    try:
+        # Copy model files back to active location
+        model_src_dir = os.path.join(version_dir, 'model')
+        if scope == 'server':
+            model_dest_dir = MODEL_DIR
+        else:
+            model_dest_dir = 'simple_model'
+        
+        if os.path.exists(model_src_dir):
+            os.makedirs(model_dest_dir, exist_ok=True)
+            for item in os.listdir(model_src_dir):
+                src_item = os.path.join(model_src_dir, item)
+                dest_item = os.path.join(model_dest_dir, item)
+                if os.path.isfile(src_item):
+                    shutil.copy2(src_item, dest_item)
+        
+        # Copy reports back to active location
+        reports_src = os.path.join(version_dir, 'reports')
+        if scope == 'server':
+            reports_dest = os.path.join(app.static_folder, 'reports')
+        else:
+            reports_dest = os.path.join(app.static_folder, 'reports', 'simple')
+        
+        if os.path.exists(reports_src):
+            os.makedirs(reports_dest, exist_ok=True)
+            # Clear destination and copy
+            for item in os.listdir(reports_src):
+                src_item = os.path.join(reports_src, item)
+                dest_item = os.path.join(reports_dest, item)
+                if os.path.isdir(src_item):
+                    if os.path.exists(dest_item):
+                        shutil.rmtree(dest_item)
+                    shutil.copytree(src_item, dest_item)
+                else:
+                    shutil.copy2(src_item, dest_item)
+        
+        set_active_model(scope, version_name)
+        logging.info(f"Activated {scope} model version: {version_name}")
+        
+        # Reload the model if it's the server model
+        if scope == 'server':
+            load_model()
+        
+        return jsonify({'success': True, 'message': f'Activated version {version_name}'})
+    
+    except Exception as e:
+        logging.error(f"Failed to activate model version: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/model/delete/<scope>/<version_name>', methods=['POST'])
+def delete_version(scope, version_name):
+    """API endpoint to delete a model version."""
+    if scope not in ('server', 'local'):
+        return jsonify({'error': 'Invalid scope'}), 400
+    
+    # Check if this is the active version
+    active = get_active_models()
+    if active.get(scope) == version_name:
+        return jsonify({'error': 'Cannot delete the active model. Activate a different version first.'}), 400
+    
+    # Verify the version exists
+    models_dir = SERVER_MODELS_DIR if scope == 'server' else LOCAL_MODELS_DIR
+    version_dir = os.path.join(models_dir, version_name)
+    
+    if not os.path.exists(version_dir):
+        return jsonify({'error': 'Version not found'}), 404
+    
+    try:
+        shutil.rmtree(version_dir)
+        logging.info(f"Deleted {scope} model version: {version_name}")
+        return jsonify({'success': True, 'message': f'Deleted version {version_name}'})
+    except Exception as e:
+        logging.error(f"Failed to delete model version: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/model/report/<scope>/<version_name>')
+def view_model_report(scope, version_name):
+    """Display full report page for a model version."""
+    if scope not in ('server', 'local'):
+        flash('Invalid scope.', 'danger')
+        return redirect(url_for('model'))
+    
+    details = get_model_version_details(scope, version_name)
+    if not details:
+        flash('Version not found.', 'danger')
+        return redirect(url_for('model'))
+    
+    # Check which report images exist
+    version_dir = os.path.join(SERVER_MODELS_DIR if scope == 'server' else LOCAL_MODELS_DIR, version_name)
+    reports_dir = os.path.join(version_dir, 'reports')
+    
+    has_confusion = os.path.exists(os.path.join(reports_dir, 'confusion_matrix.png'))
+    has_accuracy = os.path.exists(os.path.join(reports_dir, 'accuracy_plot.png'))
+    has_loss = os.path.exists(os.path.join(reports_dir, 'loss_plot.png'))
+    
+    # Load class weights
+    class_weights = None
+    weights_path = os.path.join(reports_dir, 'class_weights.json')
+    if os.path.exists(weights_path):
+        try:
+            with open(weights_path, 'r') as f:
+                class_weights = json.load(f)
+        except Exception:
+            pass
+    
+    # Check if this is the active version
+    active = get_active_models()
+    is_active = active.get(scope) == version_name
+    
+    return render_template('report.html',
+                           mode='model',
+                           scope=scope,
+                           version_name=version_name,
+                           is_active=is_active,
+                           classification_data=details.get('classification_data'),
+                           model_summary=details.get('model_summary'),
+                           has_confusion=has_confusion,
+                           has_accuracy=has_accuracy,
+                           has_loss=has_loss,
+                           class_weights=class_weights)
+
+
+@app.route('/model/report/<scope>/<version_name>/image/<filename>')
+def serve_version_image(scope, version_name, filename):
+    """Serve report images from a model version directory."""
+    if scope not in ('server', 'local'):
+        return jsonify({'error': 'Invalid scope'}), 400
+    
+    # Only allow specific image files for security
+    allowed_files = ['confusion_matrix.png', 'accuracy_plot.png', 'loss_plot.png']
+    if filename not in allowed_files:
+        return jsonify({'error': 'File not allowed'}), 403
+    
+    models_dir = SERVER_MODELS_DIR if scope == 'server' else LOCAL_MODELS_DIR
+    reports_dir = os.path.join(models_dir, version_name, 'reports')
+    
+    return send_from_directory(reports_dir, filename)
 
 
 @app.route('/about')
@@ -792,14 +1443,59 @@ def retrain_model():
     return redirect(url_for('model'))
 
 
+@app.route('/local_retrain', methods=['POST'])
+def retrain_local_model():
+    with local_retrain_lock:
+        if local_retraining_status['retraining']:
+            flash('Local retraining is already in progress.', 'warning')
+            return redirect(url_for('model'))
+
+    epochs = request.form.get('local_epochs', default=LOCAL_PARAM_DEFAULTS['epochs'], type=int)
+    learning_rate = request.form.get('local_learning_rate', default=LOCAL_PARAM_DEFAULTS['learning_rate'])
+    batch_size = request.form.get('local_batch_size', default=LOCAL_PARAM_DEFAULTS['batch_size'], type=int)
+    seed = request.form.get('local_seed', default=LOCAL_PARAM_DEFAULTS['seed'], type=int)
+
+    # Validate epochs
+    epoch_limits = LOCAL_PARAM_LIMITS['epochs']
+    if epochs is None or epochs < epoch_limits['min'] or epochs > epoch_limits['max']:
+        flash(f"Epochs must be between {epoch_limits['min']} and {epoch_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
+    # Validate learning rate
+    if learning_rate not in LOCAL_PARAM_LIMITS['learning_rate']:
+        flash('Invalid learning rate selected for local training.', 'danger')
+        return redirect(url_for('model'))
+
+    # Validate batch size
+    if batch_size not in LOCAL_PARAM_LIMITS['batch_size']:
+        flash('Invalid batch size selected for local training.', 'danger')
+        return redirect(url_for('model'))
+
+    # Validate seed
+    seed_limits = LOCAL_PARAM_LIMITS['seed']
+    if seed is None or seed < seed_limits['min'] or seed > seed_limits['max']:
+        flash(f"Seed must be between {seed_limits['min']} and {seed_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
+    retrain_thread = threading.Thread(
+        target=run_local_retraining,
+        args=(epochs, learning_rate, batch_size, seed)
+    )
+    retrain_thread.start()
+
+    flash('Local retraining started successfully!', 'success')
+    return redirect(url_for('model'))
+
+
 @app.route('/status')
 def status():
-    global retraining_status
-    status_copy = retraining_status.copy()
+    server_status = retraining_status.copy()
+    local_status = local_retraining_status.copy()
     if retraining_status['completed']:
-        # Reset 'completed' flag after sending it to the client
         retraining_status['completed'] = False
-    return jsonify(status_copy)
+    if local_retraining_status['completed']:
+        local_retraining_status['completed'] = False
+    return jsonify({'server': server_status, 'local': local_status})
 
 
 # Make read_labels available to templates

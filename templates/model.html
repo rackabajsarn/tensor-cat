@@ -1,132 +1,329 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Retrain Model</h1>
-<div style="padding: 20px;">
-    <h2>Model Info</h2>
-    <div class="info">
-        <p><strong>Last Model Training:</strong> {{ last_trained }}</p>
-        <p><strong>Images Used for Training:</strong> {{ images_used }}</p>
-        <p><strong>Current Number of Images in Dataset:</strong> {{ current_dataset_images }}</p>
+<div class="model-page">
+    <h1>Model Control Center</h1>
+    <div class="model-tabs" role="tablist" aria-label="Model scope selector">
+        <button class="model-tab active" data-target="server-panel" aria-selected="true">Server</button>
+        <button class="model-tab" data-target="local-panel" aria-selected="false">Local</button>
     </div>
 
-    <h2>Training Parameters</h2>
-    <form action="{{ url_for('retrain_model') }}" method="post">
-        <label for="epochs">Epochs: <span id="epochs_value">{{ epochs }}</span></label>
-        <input type="range" id="epochs" name="epochs" value="{{ epochs }}" min="1" max="30" step="1" oninput="epochsOutput.value = epochs.value" required>
-        <output id="epochsOutput">{{ epochs }}</output><br><br>
-        
-        <label for="fine_tune_epochs">Fine-tuning Epochs: <span id="fine_tune_epochs_value">{{ fine_tune_epochs }}</span></label>
-        <input type="range" id="fine_tune_epochs" name="fine_tune_epochs" value="{{ fine_tune_epochs }}" min="0" max="20" step="1" oninput="fineTuneEpochsOutput.value = fine_tune_epochs.value" required>
-        <output id="fineTuneEpochsOutput">{{ fine_tune_epochs }}</output><br><br>
-                
-        <label for="learning_rate">Fine-tuning Learning Rate:</label>
-        <select id="learning_rate" name="learning_rate" required>
-            {% for lr in learning_rates %}
-            <option value="{{ lr }}" {% if lr == learning_rate %}selected{% endif %}>{{ lr }}</option>
-            {% endfor %}
-        </select><br><br>
-                
-        <label for="fine_tune_at">Unfreeze Layers From: <span id="fine_tune_at_value">{{ fine_tune_at }}</span></label>
-        <input type="range" id="fine_tune_at" name="fine_tune_at" value="{{ fine_tune_at }}" min="100" max="155" step="5" oninput="fineTuneAtOutput.value = fine_tune_at.value" required>
-        <output id="fineTuneAtOutput">{{ fine_tune_at }}</output><br><br>
-                
-        <button type="submit">Retrain Model</button>
-    </form>
-    <h2>Retraining Status:</h2>
-    {% if retraining_status.retraining %}
-        <p>Retraining is in progress...</p>
-        <progress id="retraining-progress-bar" value="{{ retraining_status.progress }}" max="100"></progress>
-        <span id="progress-percentage">{{ retraining_status.progress }}%</span>
-    {% else %}
-        <p>Retraining is not in progress.</p>
-    {% endif %}
+    {% set server_params = server_info.training_params %}
+    {% set local_params = local_info.training_params %}
 
-    {% if retraining_status.error %}
-        <p style="color:red;">Error: {{ retraining_status.error }}</p>
-    {% endif %}
-    <pre id="retraining-output" style="background-color:#f4f4f4; padding:10px; border:1px solid #ddd; height:300px; overflow:auto;color:black;">
-    {{ retraining_status.output }}
-    </pre>
+    <section id="server-panel" class="model-panel active" aria-label="Server model configuration">
+        <div class="panel-header">
+            <div>
+                <h2>Server Model</h2>
+                <p>Transfer learning for the Coral TPU pipeline.</p>
+            </div>
+            <div class="panel-meta">
+                <span><strong>Last trained:</strong> {{ server_info.last_trained }}</span>
+                <span><strong>Images used:</strong> {{ server_info.images_used }}</span>
+                <span><strong>Dataset size:</strong> {{ current_dataset_images }}</span>
+            </div>
+        </div>
 
+        <form action="{{ url_for('retrain_model') }}" method="post" class="training-form" aria-label="Server retraining form">
+            <div class="form-field">
+                <label for="epochs">Epochs</label>
+                <input type="range" id="epochs" name="epochs" value="{{ server_params.epochs }}" min="1" max="30" step="1">
+                <span class="range-value" data-for="epochs">{{ server_params.epochs }}</span>
+            </div>
+            <div class="form-field">
+                <label for="fine_tune_epochs">Fine-tune Epochs</label>
+                <input type="range" id="fine_tune_epochs" name="fine_tune_epochs" value="{{ server_params.fine_tune_epochs }}" min="0" max="20" step="1">
+                <span class="range-value" data-for="fine_tune_epochs">{{ server_params.fine_tune_epochs }}</span>
+            </div>
+            <div class="form-field">
+                <label for="learning_rate">Learning Rate</label>
+                <select id="learning_rate" name="learning_rate">
+                    {% for lr in learning_rates_server %}
+                        <option value="{{ lr }}" {% if lr == server_params.learning_rate %}selected{% endif %}>{{ lr }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="fine_tune_at">Unfreeze From Layer</label>
+                <input type="range" id="fine_tune_at" name="fine_tune_at" value="{{ server_params.fine_tune_at }}" min="80" max="160" step="5">
+                <span class="range-value" data-for="fine_tune_at">{{ server_params.fine_tune_at }}</span>
+            </div>
+            <button type="submit">Retrain Server Model</button>
+        </form>
+
+        <div class="status-card" data-scope="server">
+            <div class="status-header">
+                <h3>Status</h3>
+                <p id="server-status-text">
+                    {% if retraining_status.retraining %}
+                        Retraining in progress...
+                    {% else %}
+                        Idle
+                    {% endif %}
+                </p>
+            </div>
+            <progress id="server-progress" value="{{ retraining_status.progress }}" max="100"></progress>
+            <span id="server-progress-value">{{ retraining_status.progress }}%</span>
+            <p class="status-error" id="server-error">{{ retraining_status.error or '' }}</p>
+            <pre id="server-output">{{ retraining_status.output | default('') }}</pre>
+        </div>
+
+        <div class="versions-section" data-scope="server">
+            <h3>Model Versions</h3>
+            {% if server_versions %}
+            <div class="versions-list">
+                {% for version in server_versions %}
+                <div class="version-item {% if active_models.server == version.name %}active{% endif %}" data-version="{{ version.name }}">
+                    <div class="version-row">
+                        <div class="version-info">
+                            <span class="version-name">{{ version.name }}</span>
+                            {% if active_models.server == version.name %}
+                            <span class="version-badge">Active</span>
+                            {% endif %}
+                        </div>
+                        <div class="version-metrics">
+                            {% if version.metrics.accuracy %}
+                            <span class="metric">Accuracy: {{ '%.1f' % (version.metrics.accuracy * 100) }}%</span>
+                            {% endif %}
+                        </div>
+                        <div class="version-actions">
+                            <a href="{{ url_for('view_model_report', scope='server', version_name=version.name) }}" class="view-btn">
+                                <i class="fas fa-chart-bar"></i> View Report
+                            </a>
+                            {% if active_models.server != version.name %}
+                            <button class="activate-btn" onclick="activateVersion('server', '{{ version.name }}')">
+                                <i class="fas fa-check"></i> Activate
+                            </button>
+                            <button class="delete-btn" onclick="deleteVersion('server', '{{ version.name }}')">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="no-versions">No saved versions yet. Train a model to create the first version.</p>
+            {% endif %}
+        </div>
+    </section>
+
+    <section id="local-panel" class="model-panel" aria-label="Local model configuration">
+        <div class="panel-header">
+            <div>
+                <h2>Local Model</h2>
+                <p>CPU-friendly CNN for ESP32 upload.</p>
+            </div>
+            <div class="panel-meta">
+                <span><strong>Last trained:</strong> {{ local_info.last_trained }}</span>
+                <span><strong>Images used:</strong> {{ local_info.images_used }}</span>
+                <span><strong>Dataset size:</strong> {{ current_dataset_images }}</span>
+            </div>
+        </div>
+
+        <form action="{{ url_for('retrain_local_model') }}" method="post" class="training-form" aria-label="Local retraining form">
+            <div class="form-field">
+                <label for="local_epochs">Epochs</label>
+                <input type="range" id="local_epochs" name="local_epochs" value="{{ local_params.epochs }}" min="10" max="120" step="5">
+                <span class="range-value" data-for="local_epochs">{{ local_params.epochs }}</span>
+            </div>
+            <div class="form-field">
+                <label for="local_learning_rate">Learning Rate</label>
+                <select id="local_learning_rate" name="local_learning_rate">
+                    {% for lr in learning_rates_local %}
+                        <option value="{{ lr }}" {% if lr == local_params.learning_rate %}selected{% endif %}>{{ lr }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="local_batch_size">Batch Size</label>
+                <select id="local_batch_size" name="local_batch_size">
+                    {% for size in batch_size_options %}
+                        <option value="{{ size }}" {% if size == local_params.batch_size %}selected{% endif %}>{{ size }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="local_seed">Seed</label>
+                <input type="number" id="local_seed" name="local_seed" value="{{ local_params.seed }}" min="0" max="999999" step="1">
+            </div>
+            <button type="submit">Retrain Local Model</button>
+        </form>
+
+        <div class="status-card" data-scope="local">
+            <div class="status-header">
+                <h3>Status</h3>
+                <p id="local-status-text">
+                    {% if local_retraining_status.retraining %}
+                        Retraining in progress...
+                    {% else %}
+                        Idle
+                    {% endif %}
+                </p>
+            </div>
+            <progress id="local-progress" value="{{ local_retraining_status.progress }}" max="100"></progress>
+            <span id="local-progress-value">{{ local_retraining_status.progress }}%</span>
+            <p class="status-error" id="local-error">{{ local_retraining_status.error or '' }}</p>
+            <pre id="local-output">{{ local_retraining_status.output | default('') }}</pre>
+        </div>
+
+        <div class="versions-section" data-scope="local">
+            <h3>Model Versions</h3>
+            {% if local_versions %}
+            <div class="versions-list">
+                {% for version in local_versions %}
+                <div class="version-item {% if active_models.local == version.name %}active{% endif %}" data-version="{{ version.name }}">
+                    <div class="version-row">
+                        <div class="version-info">
+                            <span class="version-name">{{ version.name }}</span>
+                            {% if active_models.local == version.name %}
+                            <span class="version-badge">Active</span>
+                            {% endif %}
+                        </div>
+                        <div class="version-metrics">
+                            {% if version.metrics.accuracy %}
+                            <span class="metric">Accuracy: {{ '%.1f' % (version.metrics.accuracy * 100) }}%</span>
+                            {% endif %}
+                        </div>
+                        <div class="version-actions">
+                            <a href="{{ url_for('view_model_report', scope='local', version_name=version.name) }}" class="view-btn">
+                                <i class="fas fa-chart-bar"></i> View Report
+                            </a>
+                            {% if active_models.local != version.name %}
+                            <button class="activate-btn" onclick="activateVersion('local', '{{ version.name }}')">
+                                <i class="fas fa-check"></i> Activate
+                            </button>
+                            <button class="delete-btn" onclick="deleteVersion('local', '{{ version.name }}')">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="no-versions">No saved versions yet. Train a model to create the first version.</p>
+            {% endif %}
+        </div>
+    </section>
 </div>
 
-<h1>Model Performance Overview</h1>
-<div class="section">
-    <h2>Classification Report</h2>
-    <iframe src="{{ url_for('static', filename='reports/classification_report.html') }}" width="100%" height="500px" title="iframeReport" style="border-width:0px"></iframe>
-</div>
-<div class="section">
-    <h2>Confusion Matrix</h2>
-    <img class="img-report" src="{{ url_for('static', filename='reports/images/confusion_matrix.png') }}" alt="Confusion Matrix">
-</div>
-<div class="section">
-    <h2>Accuracy Over Epochs</h2>
-    <img class="img-report" src="{{ url_for('static', filename='reports/images/accuracy_plot.png') }}" alt="Accuracy Plot">
-</div>
-<div class="section">
-    <h2>Loss Over Epochs</h2>
-    <img class="img-report" src="{{ url_for('static', filename='reports/images/loss_plot.png') }}" alt="Loss Plot">
-</div>
-<div class="section">
-    <h2>Class Weights</h2>
-    <table>
-        <tr>
-            <th>Class ID</th>
-            <th>Class Name</th>
-            <th>Weight</th>
-        </tr>
-        {% for class_id, weight in class_weights.items() %}
-        {% set class_id_int = class_id | int %}
-        <tr>
-            <td>{{ class_id_int }}</td>
-            <td>{{ class_names[class_id_int] }}</td>
-            <td>{{ '{0:.2f}'.format(weight) }}</td>
-        </tr>
-    {% endfor %}
-    </table>
-</div>
-<div class="section">
-    <h2>Model Summary</h2>
-    <iframe src="{{ url_for('static', filename='reports/model_summary.txt') }}" width="100%" height="350px" title="iframeModelSummary" style="border-width:0px"></iframe>
-</div>
-
-<!-- Include Font Awesome for Icons -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <script>
-    // Function to poll retraining status
-    function pollRetrainingStatus() {
-        fetch('{{ url_for("status") }}')
+    function activateVersion(scope, versionName) {
+        if (!confirm(`Activate version ${versionName} as the current ${scope} model?`)) {
+            return;
+        }
+        
+        fetch(`/model/activate/${scope}/${versionName}`, { method: 'POST' })
             .then(response => response.json())
             .then(data => {
-                if (data.retraining) {
-                    // Update progress bar if needed
-                    updateProgressBar(data.progress);
-                } else if (data.completed) {
-                    // Retraining completed
-                    // Display flash message
-                    alert('Retraining completed successfully!');
-                    // Optionally, reload the page
+                if (data.success) {
                     window.location.reload();
+                } else {
+                    alert('Failed to activate version: ' + (data.error || 'Unknown error'));
                 }
             })
-            .catch(error => console.error('Error fetching retraining status:', error));
+            .catch(err => {
+                console.error('Error activating version:', err);
+                alert('Failed to activate version.');
+            });
     }
 
-    // Function to update progress bar
-    function updateProgressBar(progress) {
-        const progressBar = document.getElementById('retraining-progress-bar');
-        if (progressBar) {
-            progressBar.value = progress;
-            progressBar.innerText = progress + '%';
+    function deleteVersion(scope, versionName) {
+        if (!confirm(`Delete version ${versionName}? This cannot be undone.`)) {
+            return;
         }
-        const progressPerc = document.getElementById('progress-percentage');
-        if (progressPerc) {
-            progressPerc.innerText = progress + '%';
-        }
+        
+        fetch(`/model/delete/${scope}/${versionName}`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Failed to delete version: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                console.error('Error deleting version:', err);
+                alert('Failed to delete version.');
+            });
     }
 
-    // Start polling every 5 seconds
-    setInterval(pollRetrainingStatus, 5000);
+    document.addEventListener('DOMContentLoaded', () => {
+        const tabs = document.querySelectorAll('.model-tab');
+        const panels = document.querySelectorAll('.model-panel');
+        const rangeInputs = document.querySelectorAll('.training-form input[type="range"]');
+        const STATUS_ENDPOINT = "{{ url_for('status') }}";
+        let reloadScheduled = false;
+
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const targetId = tab.getAttribute('data-target');
+                tabs.forEach(t => t.classList.toggle('active', t === tab));
+                tabs.forEach(t => t.setAttribute('aria-selected', t === tab));
+                panels.forEach(panel => {
+                    panel.classList.toggle('active', panel.id === targetId);
+                });
+            });
+        });
+
+        rangeInputs.forEach(input => {
+            const valueElem = document.querySelector(`.range-value[data-for="${input.id}"]`);
+            const updateValue = () => {
+                if (valueElem) {
+                    valueElem.textContent = input.value;
+                }
+            };
+            input.addEventListener('input', updateValue);
+            updateValue();
+        });
+
+        const updateStatus = (scope, data) => {
+            if (!data) {
+                return;
+            }
+            const statusText = document.getElementById(`${scope}-status-text`);
+            const progress = document.getElementById(`${scope}-progress`);
+            const progressValue = document.getElementById(`${scope}-progress-value`);
+            const errorElem = document.getElementById(`${scope}-error`);
+            const outputElem = document.getElementById(`${scope}-output`);
+
+            if (statusText) {
+                statusText.textContent = data.retraining ? 'Retraining in progress...' : 'Idle';
+            }
+            if (progress && typeof data.progress === 'number') {
+                progress.value = data.progress;
+            }
+            if (progressValue) {
+                progressValue.textContent = `${data.progress || 0}%`;
+            }
+            if (errorElem) {
+                errorElem.textContent = data.error || '';
+            }
+            if (outputElem && typeof data.output === 'string') {
+                outputElem.textContent = data.output;
+            }
+
+            if (data.completed && !reloadScheduled) {
+                reloadScheduled = true;
+                setTimeout(() => window.location.reload(), 1000);
+            }
+        };
+
+        const pollStatuses = () => {
+            fetch(STATUS_ENDPOINT)
+                .then(response => response.json())
+                .then(payload => {
+                    updateStatus('server', payload.server);
+                    updateStatus('local', payload.local);
+                })
+                .catch(err => console.error('Error fetching retraining status:', err));
+        };
+
+        pollStatuses();
+        setInterval(pollStatuses, 5000);
+    });
 </script>
-
 {% endblock %}

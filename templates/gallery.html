@@ -26,11 +26,13 @@
                              data-prey="{{ 'yes' if labels.cat and labels.morris and labels.entering and labels.prey else 'no' }}"
                              data-unknown="{{ 'yes' if not labels.cat and not labels.morris and not labels.entering and not labels.prey else 'no' }}">
             <img src="{{ url_for('send_image', mode='gallery', filename=image) }}" alt="{{ image }}" onclick="openModal('{{ image }}', 'gallery')">
+            <div class="label-icons">
+                {% if labels.cat %}<i class="fas fa-cat" title="Cat"></i>{% endif %}
+                {% if labels.morris %}<i class="fas fa-shield-cat" title="Morris"></i>{% endif %}
+                {% if labels.entering %}<i class="fas fa-sign-in-alt" title="Entering"></i>{% endif %}
+                {% if labels.prey %}<i class="fas fa-paw" title="Prey"></i>{% endif %}
+            </div>
             <p>{{ image }}</p>
-            <!-- Debugging Labels (remove after testing) -->
-            <p class="labels-debug">
-                Cat: {{ labels.cat }}, Morris: {{ labels.morris }}, Entering: {{ labels.entering }}, Prey: {{ labels.prey }}
-            </p>
         </div>
     {% endfor %}
 </div>
@@ -38,7 +40,10 @@
 <!-- Classification Modal (for reclassification) -->
 <div id="classifyModal" class="modal">
     <span class="close" onclick="closeModal()">&times;</span>
+    <button id="nav-prev" class="nav-arrow nav-prev"><i class="fas fa-chevron-left"></i></button>
+    <button id="nav-next" class="nav-arrow nav-next"><i class="fas fa-chevron-right"></i></button>
     <div class="modal-content">
+        <span id="nav-counter" class="nav-counter"></span>
         <div class="image-container">
             <img id="modalImage" src="" alt="Enlarged Image" data-filename="" data-mode="gallery">
             <!-- Overlay Buttons -->

@@ -1,5 +1,24 @@
 {
-    "last_trained": "Never",
-    "images_used": 0,
-    "retraining": false
+    "server": {
+        "last_trained": "2024-11-07 01:06:32",
+        "images_used": 463,
+        "retraining": false,
+        "training_params": {
+            "epochs": 10,
+            "fine_tune_epochs": 6,
+            "learning_rate": "8e-6",
+            "fine_tune_at": 120
+        }
+    },
+    "local": {
+        "last_trained": "Never",
+        "images_used": 0,
+        "retraining": false,
+        "training_params": {
+            "epochs": 40,
+            "learning_rate": "1e-3",
+            "batch_size": 32,
+            "seed": 0
+        }
+    }
 }

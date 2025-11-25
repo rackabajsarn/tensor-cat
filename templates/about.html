@@ -2,10 +2,64 @@
 
 {% extends "base.html" %}
 {% block content %}
-<h1 style="padding-left: 20px;">About</h1>
-<div style="padding: 20px;">
-    <p>This application allows you to classify images with four binary labels: <strong>Cat</strong>, <strong>Morris</strong>, <strong>Entering</strong>, and <strong>Prey</strong>. Labels are stored directly within the image's EXIF metadata.</p>
-    <p>Images are received via MQTT, stored in the <code>static/images</code> directory, and can be classified through the web interface.</p>
-    <p>Once classified, images are moved to the <code>dataset/images</code> directory. You can also reclassify images from the gallery.</p>
+<div class="about-page">
+    <h1>About CatCam</h1>
+    
+    <section class="about-section">
+        <h2><i class="fas fa-camera"></i> Image Collection</h2>
+        <p>Images are captured by an ESP32-CAM at the cat flap and sent via MQTT to this server. New images appear in the main gallery for classification.</p>
+    </section>
+
+    <section class="about-section">
+        <h2><i class="fas fa-tags"></i> Labeling System</h2>
+        <p>Each image can be classified with four binary labels:</p>
+        <ul class="label-list">
+            <li><span class="label-dot" style="background-color: #e67e22;"></span> <strong>Cat</strong> – A cat is visible in the image</li>
+            <li><span class="label-dot" style="background-color: #3498db;"></span> <strong>Morris</strong> – The cat is Morris (our cat)</li>
+            <li><span class="label-dot" style="background-color: #9b59b6;"></span> <strong>Entering</strong> – The cat is entering (vs leaving)</li>
+            <li><span class="label-dot" style="background-color: #e74c3c;"></span> <strong>Prey</strong> – The cat is carrying prey</li>
+        </ul>
+        <p>Labels are stored directly in the image's EXIF metadata, so they travel with the file.</p>
+    </section>
+
+    <section class="about-section">
+        <h2><i class="fas fa-folder-open"></i> Image Workflow</h2>
+        <ul>
+            <li><strong>Incoming:</strong> <code>static/images/</code> – New images from the camera</li>
+            <li><strong>Dataset:</strong> <code>dataset/images/</code> – Classified images used for training</li>
+        </ul>
+        <p>Once you save labels on an image, it moves to the dataset. You can reclassify images from the gallery at any time.</p>
+    </section>
+
+    <section class="about-section">
+        <h2><i class="fas fa-brain"></i> Model Training</h2>
+        <p>Two models can be trained from the labeled dataset:</p>
+        <ul>
+            <li><strong>Server Model:</strong> Transfer learning on EfficientNet for Coral TPU – runs on the server for high-accuracy classification</li>
+            <li><strong>Local Model:</strong> Lightweight CNN for ESP32 – runs on the camera itself for real-time prey detection</li>
+        </ul>
+    </section>
+
+    <section class="about-section">
+        <h2><i class="fas fa-code-branch"></i> Model Versioning</h2>
+        <p>Each training run is saved as a versioned snapshot with:</p>
+        <ul>
+            <li>Model files (.tflite, .keras, .cc/.h for ESP32)</li>
+            <li>Classification reports and confusion matrices</li>
+            <li>Accuracy metrics for quick comparison</li>
+        </ul>
+        <p>You can switch between versions at any time, compare performance, and delete old versions you no longer need.</p>
+    </section>
+
+    <section class="about-section">
+        <h2><i class="fas fa-cogs"></i> Tech Stack</h2>
+        <ul>
+            <li><strong>Backend:</strong> Flask (Python)</li>
+            <li><strong>ML Framework:</strong> TensorFlow / Keras</li>
+            <li><strong>Edge Inference:</strong> TensorFlow Lite (Coral TPU & ESP32)</li>
+            <li><strong>Communication:</strong> MQTT for image transfer</li>
+            <li><strong>Hardware:</strong> ESP32-CAM, Google Coral USB Accelerator</li>
+        </ul>
+    </section>
 </div>
 {% endblock %}

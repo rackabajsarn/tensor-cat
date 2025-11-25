@@ -53,11 +53,28 @@ pio device monitor
 ```
 
 ### 4. Start Server
+
+**On Server (Raspberry Pi):**
 ```bash
 cd tensor-cat
 python app.py
 # Access web UI at http://SERVER_IP:5000
 ```
+
+**For Local Development (Windows/Mac without Coral TPU):**
+```bash
+cd tensor-cat
+# Set offline mode to disable MQTT and Coral TPU features
+set LOCAL_OFFLINE_MODE=1   # Windows CMD
+# or
+$env:LOCAL_OFFLINE_MODE="1"   # PowerShell
+# or
+export LOCAL_OFFLINE_MODE=1   # Linux/Mac
+
+python app.py
+```
+
+> **Note:** Offline mode disables MQTT listener, Coral TPU inference, and ESP32 uploads. Training, labeling, and model versioning work normally.
 
 ---
 

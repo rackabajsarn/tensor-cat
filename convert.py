@@ -6,6 +6,9 @@ def process_image(image_path, resized_output_folder, cropped_output_folder):
     # Open the image
     img = Image.open(image_path)
     width, height = img.size
+    
+    # Get EXIF data if it exists
+    exif_data = img.info.get('exif')
 
     # Define the crop size (square: 384x384)
     crop_size = 384
@@ -26,8 +29,15 @@ def process_image(image_path, resized_output_folder, cropped_output_folder):
     base_name = os.path.basename(image_path)
     resized_output_path = os.path.join(resized_output_folder, base_name)
     cropped_output_path = os.path.join(cropped_output_folder, base_name)
-    resized_img.save(resized_output_path)
-    cropped_img.save(cropped_output_path)
+    
+    # Save with EXIF data preserved if it exists
+    if exif_data:
+        resized_img.save(resized_output_path, exif=exif_data)
+        cropped_img.save(cropped_output_path, exif=exif_data)
+    else:
+        resized_img.save(resized_output_path)
+        cropped_img.save(cropped_output_path)
+    
     print(f"Processed: {base_name}")
 
 def main():
