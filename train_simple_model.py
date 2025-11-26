@@ -45,7 +45,7 @@ DATASET_IMAGES_DIR = 'dataset/images'
 MODEL_DIR = 'simple_model'
 MODEL_NAME = 'my_simple_model_quant'
 STATIC_DIR = 'static'
-REPORTS_DIR = os.path.join(STATIC_DIR, 'reports')
+REPORTS_DIR = os.path.join(STATIC_DIR, 'reports', 'local')
 IMAGES_DIR = os.path.join(REPORTS_DIR, 'images')
 
 # Ensure directories exist

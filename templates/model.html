@@ -322,9 +322,23 @@
         const STATUS_ENDPOINT = "{{ url_for('status') }}";
         let reloadScheduled = false;
 
+        // Restore saved tab from localStorage
+        const savedTab = localStorage.getItem('modelActiveTab');
+        if (savedTab) {
+            const savedTabBtn = document.querySelector(`.model-tab[data-target="${savedTab}"]`);
+            if (savedTabBtn) {
+                tabs.forEach(t => t.classList.remove('active'));
+                panels.forEach(p => p.classList.remove('active'));
+                savedTabBtn.classList.add('active');
+                document.getElementById(savedTab)?.classList.add('active');
+            }
+        }
+
         tabs.forEach(tab => {
             tab.addEventListener('click', () => {
                 const targetId = tab.getAttribute('data-target');
+                // Save active tab to localStorage
+                localStorage.setItem('modelActiveTab', targetId);
                 tabs.forEach(t => t.classList.toggle('active', t === tab));
                 tabs.forEach(t => t.setAttribute('aria-selected', t === tab));
                 panels.forEach(panel => {
