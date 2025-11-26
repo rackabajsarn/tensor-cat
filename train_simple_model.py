@@ -10,7 +10,7 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers
 from sklearn.utils import class_weight
-from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_recall_curve
+from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_recall_curve, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 import seaborn as sns
 from jinja2 import Template
@@ -216,7 +216,7 @@ if __name__ == '__main__':
     )
     class_weight_dict = dict(enumerate(class_weights_arr))
     # Emphasize 'prey' a bit more
-    class_weight_dict[CLASSES.index('prey')] *= 4.0
+    class_weight_dict[CLASSES.index('prey')] *= 2.0
 
     # Datasets
     AUTOTUNE = tf.data.AUTOTUNE
@@ -344,6 +344,7 @@ if __name__ == '__main__':
     f1 = 2*prec*rec/(prec+rec+1e-9)
     best_idx = np.argmax(f1[:-1]) if len(f1) > 1 else 0
     chosen_thr = float(thr[best_idx]) if len(thr) > 0 else 0.5
+    chosen_thr = max(chosen_thr, 0.7)
     with open(threshold_filename, 'w') as f:
         f.write(str(chosen_thr))
     print("Chosen prey threshold:", chosen_thr)
@@ -397,13 +398,17 @@ if __name__ == '__main__':
     print(f"Classification report saved to {report_filename}")
 
     # Confusion matrix
-    cm = confusion_matrix(val_labels, val_pred_labels, labels=[0,1])
-    plt.figure(figsize=(6, 5))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=CLASSES, yticklabels=CLASSES,
-                annot_kws={"size": 14})
-    plt.xlabel('Predicted', fontsize=12)
-    plt.ylabel('True', fontsize=12)
-    plt.title('Confusion Matrix', fontsize=14)
+    # Confusion matrix (binary)
+
+
+    cm = confusion_matrix(val_labels, val_pred_labels, labels=[0, 1])
+    disp = ConfusionMatrixDisplay(
+        confusion_matrix=cm,
+        display_labels=CLASSES
+    )
+    plt.figure(figsize=(5, 4))
+    disp.plot(cmap="Blues", colorbar=True)
+    plt.title("Confusion Matrix")
     plt.tight_layout()
     plt.savefig(confusion_matrix_filename)
     plt.close()
