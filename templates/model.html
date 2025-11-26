@@ -67,6 +67,38 @@
             <pre id="server-output">{{ retraining_status.output | default('') }}</pre>
         </div>
 
+        {% if active_models.server %}
+        <div class="active-model-summary">
+            <div class="summary-header">
+                <h3>Active Model</h3>
+                <span class="version-name">{{ active_models.server }}</span>
+                <a href="{{ url_for('view_model_report', scope='server', version_name=active_models.server) }}" class="view-full-btn">
+                    <i class="fas fa-external-link-alt"></i> Full Report
+                </a>
+            </div>
+            <div class="summary-content">
+                {% if server_reports.confusion %}
+                <div class="summary-image">
+                    <img src="{{ url_for('static', filename='reports/server/images/confusion_matrix.png') }}" alt="Confusion Matrix">
+                </div>
+                {% endif %}
+                <div class="summary-metrics">
+                    {% if server_classification_data %}
+                    <table class="compact-table">
+                        {% for row in server_classification_data[:6] %}
+                        <tr>
+                            {% for cell in row %}
+                            <td>{{ cell }}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </table>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="versions-section" data-scope="server">
             <h3>Model Versions</h3>
             {% if server_versions %}
@@ -166,6 +198,38 @@
             <p class="status-error" id="local-error">{{ local_retraining_status.error or '' }}</p>
             <pre id="local-output">{{ local_retraining_status.output | default('') }}</pre>
         </div>
+
+        {% if active_models.local %}
+        <div class="active-model-summary">
+            <div class="summary-header">
+                <h3>Active Model</h3>
+                <span class="version-name">{{ active_models.local }}</span>
+                <a href="{{ url_for('view_model_report', scope='local', version_name=active_models.local) }}" class="view-full-btn">
+                    <i class="fas fa-external-link-alt"></i> Full Report
+                </a>
+            </div>
+            <div class="summary-content">
+                {% if local_reports.confusion %}
+                <div class="summary-image">
+                    <img src="{{ url_for('static', filename='reports/local/images/confusion_matrix.png') }}" alt="Confusion Matrix">
+                </div>
+                {% endif %}
+                <div class="summary-metrics">
+                    {% if local_classification_data %}
+                    <table class="compact-table">
+                        {% for row in local_classification_data[:5] %}
+                        <tr>
+                            {% for cell in row %}
+                            <td>{{ cell }}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </table>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
 
         <div class="versions-section" data-scope="local">
             <h3>Model Versions</h3>

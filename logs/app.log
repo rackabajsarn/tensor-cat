@@ -41752,3 +41752,7 @@ ModuleNotFoundError: No module named 'tensorflow'
 2025-11-26 01:40:30,579 INFO:MQTT communication disabled for offline testing.
 2025-11-26 01:41:16,057 INFO:Current number of images in dataset: 757
 2025-11-26 01:41:24,183 INFO:Current number of images in dataset: 757
+2025-11-26 02:03:02,990 INFO:Application started.
+2025-11-26 02:03:02,990 INFO:Application running in offline mode; Edge TPU inference disabled.
+2025-11-26 02:03:02,990 INFO:MQTT communication disabled for offline testing.
+2025-11-26 02:03:15,641 INFO:Current number of images in dataset: 757

@@ -1,7 +1,7 @@
 credentials.py
 model_info.json
-.venv
-/dataset/
-/static/images
-/models/
-/logs/
+.venv/
+dataset/
+static/images/
+models/
+logs/

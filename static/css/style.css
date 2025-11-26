@@ -1284,8 +1284,147 @@ body.dark-theme .report-card pre {
     background-color: #2a2a2a;
 }
 
+/* Active Model Summary */
+.active-model-summary {
+    background-color: #f9f9f9;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    border: 2px solid #1abc9c;
+}
+
+body.dark-theme .active-model-summary {
+    background-color: #1e1e1e;
+}
+
+.summary-header {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+}
+
+.summary-header h3 {
+    margin: 0;
+    color: #1abc9c;
+}
+
+.summary-header .version-name {
+    font-family: monospace;
+    background-color: #e8e8e8;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+body.dark-theme .summary-header .version-name {
+    background-color: #333;
+}
+
+.summary-header .view-full-btn {
+    margin-left: auto;
+    color: #1abc9c;
+    text-decoration: none;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.summary-header .view-full-btn:hover {
+    text-decoration: underline;
+}
+
+.summary-content {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.summary-image img {
+    max-width: 300px;
+    height: auto;
+    border-radius: 8px;
+}
+
+.summary-metrics .compact-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.summary-metrics .compact-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #ddd;
+    white-space: nowrap;
+}
+
+body.dark-theme .summary-metrics .compact-table td {
+    border-bottom-color: #444;
+}
+
+.summary-metrics .compact-table tr:first-child td {
+    font-weight: 600;
+    background-color: #f0f0f0;
+}
+
+body.dark-theme .summary-metrics .compact-table tr:first-child td {
+    background-color: #2a2a2a;
+}
+
 @media (max-width: 900px) {
     .reports-grid {
         grid-template-columns: 1fr;
+    }
+    
+    .summary-content {
+        grid-template-columns: 1fr;
+    }
+    
+    .summary-image img {
+        max-width: 100%;
+    }
+}
+
+/* Mobile responsiveness for report tables */
+@media (max-width: 600px) {
+    .report-card {
+        padding: 12px;
+        overflow-x: auto;
+    }
+    
+    .report-card table {
+        font-size: 11px;
+        min-width: 100%;
+        display: block;
+        overflow-x: auto;
+    }
+    
+    .report-card table th,
+    .report-card table td {
+        padding: 6px 4px;
+        white-space: nowrap;
+    }
+    
+    .summary-metrics .compact-table {
+        font-size: 11px;
+        display: block;
+        overflow-x: auto;
+    }
+    
+    .summary-metrics .compact-table td {
+        padding: 4px 6px;
+    }
+    
+    .summary-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .summary-header .view-full-btn {
+        margin-left: 0;
     }
 }
