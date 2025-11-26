@@ -247,7 +247,7 @@ if __name__ == '__main__':
     precision_prey = tf.keras.metrics.Precision(class_id=prey_index, name='precision_prey')
     recall_prey = tf.keras.metrics.Recall(class_id=prey_index, name='recall_prey')
 
-    loss = tf.keras.losses.SparseCategoricalCrossentropy(label_smoothing=0.05)
+    loss = tf.keras.losses.SparseCategoricalCrossentropy()
     model.compile(
         optimizer=optimizer,
         loss=loss,
