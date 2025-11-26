@@ -3,5 +3,6 @@ model_info.json
 .venv/
 dataset/
 static/images/
+static/reports/
 models/
 logs/
