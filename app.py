@@ -17,7 +17,7 @@ import piexif
 from PIL import Image
 from PIL import ImageOps
 
-OFFLINE_MODE = os.environ.get('LOCAL_OFFLINE_MODE', '0') == '1'
+OFFLINE_MODE = os.environ.get('LOCAL_OFFLINE_MODE', '1') == '1'
 
 try:
     if OFFLINE_MODE:
@@ -1123,7 +1123,7 @@ def send_image(mode, filename):
 
 @app.route('/model')
 def model():
-    server_weights_path = os.path.join(app.static_folder, 'reports', 'class_weights.json')
+    server_weights_path = os.path.join(app.static_folder, 'reports', 'full', 'class_weights.json')
     local_weights_path = os.path.join(app.static_folder, 'reports', 'simple', 'class_weights.json')
 
     class_weights_server = read_json_file(server_weights_path, {})
@@ -1142,11 +1142,11 @@ def model():
     batch_size_options = [16, 32, 48, 64]
 
     server_reports = {
-        'classification': static_asset_exists('reports/classification_report.html'),
-        'confusion': static_asset_exists('reports/images/confusion_matrix.png'),
-        'accuracy': static_asset_exists('reports/images/accuracy_plot.png'),
-        'loss': static_asset_exists('reports/images/loss_plot.png'),
-        'summary': static_asset_exists('reports/model_summary.txt')
+        'classification': static_asset_exists('reports/full/classification_report.html'),
+        'confusion': static_asset_exists('reports/full/images/confusion_matrix.png'),
+        'accuracy': static_asset_exists('reports/full/images/accuracy_plot.png'),
+        'loss': static_asset_exists('reports/full/images/loss_plot.png'),
+        'summary': static_asset_exists('reports/full/model_summary.txt')
     }
 
     local_reports = {
@@ -1159,13 +1159,13 @@ def model():
 
     # Parse classification reports and model summaries
     server_classification_data = parse_classification_report(
-        os.path.join(app.static_folder, 'reports', 'classification_report.html')
+        os.path.join(app.static_folder, 'reports', 'full' 'classification_report.html')
     )
     local_classification_data = parse_classification_report(
         os.path.join(app.static_folder, 'reports', 'simple', 'classification_report.html')
     )
     server_model_summary = read_model_summary(
-        os.path.join(app.static_folder, 'reports', 'model_summary.txt')
+        os.path.join(app.static_folder, 'reports', 'full', 'model_summary.txt')
     )
     local_model_summary = read_model_summary(
         os.path.join(app.static_folder, 'reports', 'simple', 'model_summary.txt')
@@ -1362,9 +1362,9 @@ def view_model_report(scope, version_name):
     version_dir = os.path.join(SERVER_MODELS_DIR if scope == 'server' else LOCAL_MODELS_DIR, version_name)
     reports_dir = os.path.join(version_dir, 'reports')
     
-    has_confusion = os.path.exists(os.path.join(reports_dir, 'confusion_matrix.png'))
-    has_accuracy = os.path.exists(os.path.join(reports_dir, 'accuracy_plot.png'))
-    has_loss = os.path.exists(os.path.join(reports_dir, 'loss_plot.png'))
+    has_confusion = os.path.exists(os.path.join(reports_dir, 'images', 'confusion_matrix.png'))
+    has_accuracy = os.path.exists(os.path.join(reports_dir, 'images', 'accuracy_plot.png'))
+    has_loss = os.path.exists(os.path.join(reports_dir, 'images', 'loss_plot.png'))
     
     # Load class weights
     class_weights = None
@@ -1393,7 +1393,7 @@ def view_model_report(scope, version_name):
                            class_weights=class_weights)
 
 
-@app.route('/model/report/<scope>/<version_name>/image/<filename>')
+@app.route('/models/<scope>/<version_name>/reports/images/<filename>')
 def serve_version_image(scope, version_name, filename):
     """Serve report images from a model version directory."""
     if scope not in ('server', 'local'):
