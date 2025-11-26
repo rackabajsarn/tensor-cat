@@ -1,3 +1,4 @@
+
 import os
 # Disable CUDA if not using GPU
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -9,7 +10,7 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers
 from sklearn.utils import class_weight
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_recall_curve
 import matplotlib.pyplot as plt
 import seaborn as sns
 from jinja2 import Template
@@ -18,84 +19,66 @@ import argparse
 from collections import Counter
 from collections import defaultdict
 import random
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
-
-# Recommended starting parameters for a small custom CNN (not pretrained):
-# - epochs: 30~50 (more epochs are usually needed for training from scratch)
-# - fine_tune_epochs: 0 (no fine-tuning for a custom CNN)
-# - learning_rate: 1e-3 (higher than for transfer learning)
-# - fine_tune_at: (not used, but keep default for compatibility)
-
-parser = argparse.ArgumentParser(description='Train the model with specified parameters.')
+# -----------------------------
+# Args & constants
+# -----------------------------
+parser = argparse.ArgumentParser(description='Train a small grayscale 96x96 model (binary prey vs not_prey) and export TFLite + .cc')
 parser.add_argument('--epochs', type=int, default=40, help='Number of epochs for initial training.')
-parser.add_argument('--fine_tune_epochs', type=int, default=0, help='Number of epochs for fine-tuning.')
-parser.add_argument('--learning_rate', type=str, default='1e-3', help='Learning rate for training.')
-parser.add_argument('--fine_tune_at', type=int, default=120, help='Layer number to start fine-tuning from.')
-parser.add_argument('--seed', type=int, default=0, help='Seed number')
-parser.add_argument('--batch_size', type=int, default=32, help='batch size')
-
+parser.add_argument('--learning_rate', type=str, default='1e-3', help='Initial learning rate.')
+parser.add_argument('--batch_size', type=int, default=32, help='Batch size.')
+parser.add_argument('--seed', type=int, default=0, help='Random seed.')
 args = parser.parse_args()
 
-
 EPOCHS = args.epochs
-FINE_TUNE_EPOCHS = args.fine_tune_epochs
-LEARNING_RATE = float(args.learning_rate)
-FINE_TUNE_AT = args.fine_tune_at
+INIT_LR = float(args.learning_rate)
+BATCH_SIZE = args.batch_size
 SEED = args.seed
-BATCH_SIZE = args.batch_size  # Try reducing to 32 or even 16 if you see overfitting or want more updates per epoch
+random.seed(SEED)
+np.random.seed(SEED)
+tf.random.set_seed(SEED)
 
-# If you want to always know the seed, you can:
-# - Generate a random seed yourself when SEED == 0, print/store it, and use it for all libraries.
-# Example:
-if SEED == 0:
-    SEED = random.randint(1, 2**32 - 1)
-    random.seed(SEED)
-    np.random.seed(SEED)
-    tf.random.set_seed(SEED)
-
-# Directories
+# -----------------------------
+# Paths
+# -----------------------------
 DATASET_IMAGES_DIR = 'dataset/images'
 MODEL_DIR = 'simple_model'
 MODEL_NAME = 'my_simple_model_quant'
 STATIC_DIR = 'static'
-REPORTS_DIR = os.path.join(STATIC_DIR, 'reports', 'local')
+REPORTS_DIR = os.path.join(STATIC_DIR, 'reports')
 IMAGES_DIR = os.path.join(REPORTS_DIR, 'images')
-
 
 # Ensure directories exist
 os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(REPORTS_DIR, exist_ok=True)
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
-# Update file paths accordingly
+# Report/plot files
 report_filename = os.path.join(REPORTS_DIR, 'classification_report.html')
 accuracy_plot_filename = os.path.join(IMAGES_DIR, 'accuracy_plot.png')
 loss_plot_filename = os.path.join(IMAGES_DIR, 'loss_plot.png')
 confusion_matrix_filename = os.path.join(IMAGES_DIR, 'confusion_matrix.png')
 class_weights_filename = os.path.join(REPORTS_DIR, 'class_weights.json')
 model_summary_filename = os.path.join(REPORTS_DIR, 'model_summary.txt')
+threshold_filename = os.path.join(REPORTS_DIR, 'prey_threshold.txt')
 
-# Classes
-CLASSES = ['not_cat', 'not_prey', 'prey']
+# -----------------------------
+# Task setup
+# -----------------------------
+CLASSES = ['not_prey', 'prey']  # binary
 IMG_SIZE = (96, 96)
 
-
-# To maximize recall for 'prey', increase the class weight for 'prey'
-# This will penalize false negatives more during training
-
 class ProgressCallback(tf.keras.callbacks.Callback):
-    def __init__(self, total_epochs, offset=0):
+    def __init__(self, total_epochs):
         super().__init__()
         self.total_epochs = total_epochs
-        self.offset = offset  # Number of epochs completed before this phase
-
     def on_epoch_end(self, epoch, logs=None):
-        current_epoch = epoch + 1
-        progress = int((current_epoch / self.total_epochs) * 100)
+        progress = int((epoch + 1) / self.total_epochs * 100)
         print(f'\nPROGRESS:{progress}', flush=True)
 
-
+# -----------------------------
+# Data I/O
+# -----------------------------
 def get_image_labels(image_path):
     try:
         img = Image.open(image_path)
@@ -104,344 +87,276 @@ def get_image_labels(image_path):
         labels = json.loads(description)
     except Exception as e:
         print(f"Error reading labels from {image_path}: {e}")
-        labels = {
-            "prey": False
-        }
+        labels = {"cat": False, "morris": False, "entering": False, "prey": False}
     return labels
 
 def load_dataset(dataset_dir):
     image_paths = []
     labels_list = []
-
     for filename in os.listdir(dataset_dir):
-        if filename.lower().endswith('.jpg') or filename.lower().endswith('.jpeg'):
+        if filename.lower().endswith(('.jpg', '.jpeg')):
             image_path = os.path.join(dataset_dir, filename)
             labels = get_image_labels(image_path)
             image_paths.append(image_path)
             labels_list.append(labels)
-
     return image_paths, labels_list
 
 def convert_labels(labels_list):
     labels_encoded = []
     for labels in labels_list:
-        label = 'not_cat'
-        if labels['cat']:
-            if labels['morris']:
-                if labels['entering']:
-                    if labels['prey']:
-                        label = 'prey'
-                    else:
-                        label = 'not_prey'
-                else:
-                    label = 'not_cat'
-            else:
-                if labels['entering']:
-                    label = 'not_cat'
-                else:
-                    label = 'not_cat'  # Adjust if you have data for unknown cat leaving
-        else:
-            label = 'not_cat'
+        # robust access
+        prey = bool(labels.get('prey', False))
+        label = 'prey' if prey else 'not_prey'
         labels_encoded.append(CLASSES.index(label))
     return labels_encoded
 
-# Data augmentation for training dataset
-data_augmentation = tf.keras.Sequential([
-    layers.RandomBrightness(0.2),
-    layers.RandomContrast(0.2),
-    layers.GaussianNoise(0.1),
-])
-
+# -----------------------------
+# Preprocessing (no external /255 — use model Rescaling layer instead)
+# -----------------------------
 def preprocess_image(image_path, label):
     image = tf.io.read_file(image_path)
-    image = tf.image.decode_jpeg(image, channels=1)  # Read as grayscale
-    shorter_side = tf.minimum(tf.shape(image)[0], tf.shape(image)[1])
+    image = tf.image.decode_jpeg(image, channels=1)  # grayscale
+    # square center crop
+    h = tf.shape(image)[0]
+    w = tf.shape(image)[1]
+    shorter_side = tf.minimum(h, w)
     image = tf.image.resize_with_crop_or_pad(image, shorter_side, shorter_side)
-    image = tf.image.resize(image, IMG_SIZE)
-    image = image / 255.0  # Normalize to [0,1]
+    image = tf.image.resize(image, IMG_SIZE, method='bilinear', antialias=True)
+    # keep dtype uint8; Rescaling layer will scale to 0..1
     return image, label
+
+@tf.function
+def adjust_gamma(img):
+    # gamma in [0.8, 1.25]
+    g = tf.random.uniform([], 0.8, 1.25)
+    img = tf.image.adjust_gamma(tf.cast(img, tf.float32)/255.0, gamma=g)
+    img = tf.clip_by_value(img, 0.0, 1.0)
+    img = tf.cast(img*255.0, tf.uint8)
+    return img
 
 def preprocess_image_train(image_path, label):
     image, label = preprocess_image(image_path, label)
-    #image = data_augmentation(image)
+    # Photometric-only augmentations; tiny translations
+    image = tf.image.random_brightness(image, 0.07)
+    image = tf.image.random_contrast(image, 0.9, 1.1)
+    image = adjust_gamma(image)
+    image = tf.image.random_jpeg_quality(image, 80, 100)
+    image = tf.pad(image, [[2,2],[2,2],[0,0]], mode='REFLECT')
+    image = tf.image.random_crop(image, size=[IMG_SIZE[0], IMG_SIZE[1], 1])
     return image, label
 
 def preprocess_image_val(image_path, label):
     image, label = preprocess_image(image_path, label)
     return image, label
 
+# Representative dataset for INT8: feed uint8 in [0..255]
 def representative_data_gen():
-    # Group image paths by their class label
+    # Group by label
     class_to_images = defaultdict(list)
     for path, label in zip(image_paths, labels_encoded):
         class_to_images[label].append(path)
 
-    # Sample a few images from each class
     sampled_paths = []
     for images in class_to_images.values():
-        sampled_paths.extend(random.sample(images, min(len(images), 20)))  # Adjust per-class sample size as needed
+        sampled_paths.extend(random.sample(images, min(len(images), 20)))
 
-    # Generate representative samples
-    for image_path in sampled_paths[:100]:  # Limit to 100 total
-        image = Image.open(image_path).convert("L").resize(IMG_SIZE)  # Ensure grayscale
-        image = np.array(image).astype(np.float32) / 255.0
-        image = np.expand_dims(image, axis=-1)  # Shape: (96, 96, 1)
-        image = np.expand_dims(image, axis=0)   # Shape: (1, 96, 96, 1)
-        yield [image]
+    for image_path in sampled_paths[:100]:
+        img = Image.open(image_path).convert("L").resize(IMG_SIZE)
+        arr = np.array(img).astype(np.uint8)  # (96,96)
+        arr = np.expand_dims(arr, axis=-1)    # (96,96,1)
+        arr = np.expand_dims(arr, axis=0)     # (1,96,96,1)
+        yield [arr]
 
-# Notes on result variability and local minima:
-# - Even with a fixed random seed, neural network training can be non-deterministic due to:
-#   - Multi-threading, GPU parallelism, and non-deterministic operations in TensorFlow.
-#   - Data pipeline shuffling and parallelism.
-# - The model can get stuck in different local minima or saddle points, especially with small datasets or imbalanced classes.
-# - This can lead to noticeably different results between runs, even with the same code and seed.
+# -----------------------------
+# Model (tiny depthwise-separable CNN)
+# -----------------------------
+def ds_block(filters):
+    return tf.keras.Sequential([
+        tf.keras.layers.DepthwiseConv2D(3, padding='same', activation='relu'),
+        tf.keras.layers.Conv2D(filters, 1, activation='relu'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.MaxPooling2D(2)
+    ])
 
-# To reduce variability:
-# - Keep the random seed fixed (as you do).
-# - Use a smaller learning rate for more stable convergence.
-# - Train for more epochs with early stopping.
-# - Try running the training multiple times and average the results (ensemble or cross-validation).
-# - Consider using a larger or more diverse dataset if possible.
+def build_model():
+    inputs = tf.keras.Input(shape=(IMG_SIZE[0], IMG_SIZE[1], 1), dtype=tf.uint8)
+    x = layers.Rescaling(1./255.0)(inputs)  # move normalization inside graph
+    x = ds_block(16)(x)
+    x = ds_block(32)(x)
+    x = ds_block(64)(x)
+    x = layers.Conv2D(96, 1, activation='relu')(x)
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dropout(0.3)(x)
+    outputs = layers.Dense(len(CLASSES), activation='softmax')(x)
+    return tf.keras.Model(inputs, outputs)
 
-# For critical applications, it's common to train several models and select the best or average their predictions.
-
-# To ensure you get the best possible model, consider these steps:
-
-# 1. Use K-fold cross-validation to evaluate model robustness.
-# 2. Train multiple models with different seeds and average their results (ensemble).
-# 3. Perform a grid search over hyperparameters (class weights, learning rate, threshold, etc.).
-# 4. Monitor both validation loss and accuracy, and save the best model based on your most important metric (e.g., recall for 'prey').
-# 5. Optionally, use a validation split from the training set for early stopping, and keep a separate test set for final evaluation.
-
-# Example: K-fold cross-validation (simplified, pseudocode)
-# from sklearn.model_selection import StratifiedKFold
-# skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
-# for train_idx, val_idx in skf.split(image_paths, labels_encoded):
-#     # Split data, train model, evaluate, and collect metrics
-
-# Example: Save the best model based on recall for 'prey'
-best_recall_checkpoint = ModelCheckpoint(
-    filepath=os.path.join(MODEL_DIR, 'best_recall_model.keras'),
-    monitor='val_recall_prey',
-    mode='max',
-    save_best_only=True,
-    save_weights_only=False
-)
-
+# -----------------------------
+# Training
+# -----------------------------
 if __name__ == '__main__':
     # Load dataset
-    # print("Loading dataset...")
-    # print("Epochs:", EPOCHS)
-    # print("Fine Tune Epochs:", FINE_TUNE_EPOCHS)
-    # print("Learning Rate:", LEARNING_RATE)
-    # print("Fine tune at layer:", FINE_TUNE_AT)
     image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
     labels_encoded = convert_labels(labels_list)
 
-
-    # Count the occurrences of each class in the encoded labels
+    # Class distribution
     class_counts = Counter(labels_encoded)
     print("Class distribution (encoded):", class_counts)
-
-    # Optionally, map the counts to class names
     class_distribution = {CLASSES[label]: count for label, count in class_counts.items()}
     print("Class distribution (named):", class_distribution)
 
-    # Split dataset
+    # Split (stratified)
     train_paths, val_paths, train_labels, val_labels = train_test_split(
-        image_paths, labels_encoded, test_size=0.2, random_state=42, stratify=labels_encoded)
+        image_paths, labels_encoded, test_size=0.2, random_state=SEED, stratify=labels_encoded)
 
-    # Compute class weights to handle class imbalance
-    class_weights = class_weight.compute_class_weight(
+    # Class weights
+    class_weights_arr = class_weight.compute_class_weight(
         class_weight='balanced',
         classes=np.unique(train_labels),
         y=train_labels
     )
-    class_weight_dict = dict(enumerate(class_weights))
+    class_weight_dict = dict(enumerate(class_weights_arr))
+    # Emphasize 'prey' a bit more
+    class_weight_dict[CLASSES.index('prey')] *= 4.0
 
-    # Increase the weight for 'prey' to prioritize recall (reduce missed detections)
-    class_weight_dict[CLASSES.index('prey')] *= 4.0  # You can try 2.0, 3.0, or higher recall
-    #class_weight_dict[CLASSES.index('not_prey')] *= 3.0
+    # Datasets
+    AUTOTUNE = tf.data.AUTOTUNE
+    train_ds = tf.data.Dataset.from_tensor_slices((train_paths, train_labels))\
+        .shuffle(buffer_size=2048, seed=SEED, reshuffle_each_iteration=True)\
+        .map(preprocess_image_train, num_parallel_calls=AUTOTUNE)\
+        .batch(BATCH_SIZE)\
+        .prefetch(AUTOTUNE)
 
-    # Create TensorFlow datasets
-    train_ds = tf.data.Dataset.from_tensor_slices((train_paths, train_labels))
-    train_ds = train_ds.map(preprocess_image_train, num_parallel_calls=tf.data.AUTOTUNE)
-    train_ds = train_ds.shuffle(buffer_size=1000)
-    train_ds = train_ds.batch(BATCH_SIZE)
-    train_ds = train_ds.prefetch(buffer_size=tf.data.AUTOTUNE)
+    val_ds = tf.data.Dataset.from_tensor_slices((val_paths, val_labels))\
+        .map(preprocess_image_val, num_parallel_calls=AUTOTUNE)\
+        .batch(BATCH_SIZE)\
+        .prefetch(AUTOTUNE)
 
-    val_ds = tf.data.Dataset.from_tensor_slices((val_paths, val_labels))
-    val_ds = val_ds.map(preprocess_image_val, num_parallel_calls=tf.data.AUTOTUNE)
-    val_ds = val_ds.batch(BATCH_SIZE)
-    val_ds = val_ds.prefetch(buffer_size=tf.data.AUTOTUNE)
+    # Model & optimizer
+    model = build_model()
 
-    # Define the model
-    print("Defining the model...")
+    # AdamW + cosine decay
+    steps_per_epoch = max(1, len(train_paths)//BATCH_SIZE)
+    total_steps = steps_per_epoch * EPOCHS
+    lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
+        initial_learning_rate=INIT_LR, decay_steps=total_steps, alpha=1e-2
+    )
+    optimizer = tf.keras.optimizers.AdamW(learning_rate=lr_schedule, weight_decay=1e-5)
 
-    # Small custom CNN for grayscale input and microcontroller deployment
-    model = tf.keras.Sequential([
-        tf.keras.layers.InputLayer(input_shape=(*IMG_SIZE, 1)),
-        tf.keras.layers.Conv2D(16, (3, 3), activation='relu', padding='same'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.MaxPooling2D((2, 2)),
-        tf.keras.layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.MaxPooling2D((2, 2)),
-        tf.keras.layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.MaxPooling2D((2, 2)),
-        tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(64, activation='relu'),
-        tf.keras.layers.Dropout(0.3),
-        tf.keras.layers.Dense(len(CLASSES), activation='softmax')
-    ])
+    # Metrics focused on 'prey' class
+    prey_index = CLASSES.index('prey')
+    precision_prey = tf.keras.metrics.Precision(class_id=prey_index, name='precision_prey')
+    recall_prey = tf.keras.metrics.Recall(class_id=prey_index, name='recall_prey')
 
-    precision_prey = tf.keras.metrics.Precision(class_id=CLASSES.index('prey'), name='precision_prey')
-    recall_prey = tf.keras.metrics.Recall(class_id=CLASSES.index('prey'), name='recall_prey')
-
-    # Compile the model with appropriate metrics
+    loss = tf.keras.losses.SparseCategoricalCrossentropy(label_smoothing=0.05)
     model.compile(
-        optimizer='adam',
-        loss='sparse_categorical_crossentropy',
-        metrics=[
-            tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
-            precision_prey, 
-            recall_prey
-        ]
+        optimizer=optimizer,
+        loss=loss,
+        metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
+                 precision_prey, recall_prey]
     )
 
-    # Define a custom callback to save the best model based on validation accuracy
-    checkpoint_filepath = os.path.join(MODEL_DIR, 'best_model.keras')
-    model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-        filepath=checkpoint_filepath,
-        save_weights_only=False,  # Save the full model
-        monitor='val_accuracy',
-        mode='max',
-        save_best_only=True
+    # Callbacks
+    checkpoint_acc = tf.keras.callbacks.ModelCheckpoint(
+        filepath=os.path.join(MODEL_DIR, 'best_acc_model.keras'),
+        monitor='val_accuracy', mode='max', save_best_only=True
     )
-
-    # EarlyStopping callback to prevent overfitting
-    early_stopping = EarlyStopping(
-        monitor='val_loss',
-        patience=10,           # Allow more epochs before stopping
-        restore_best_weights=True
+    checkpoint_recall = tf.keras.callbacks.ModelCheckpoint(
+        filepath=os.path.join(MODEL_DIR, 'best_recall_model.keras'),
+        monitor='val_recall_prey', mode='max', save_best_only=True
     )
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        monitor='val_recall_prey', patience=5, mode='max', restore_best_weights=True
+    )
+    progress_callback = ProgressCallback(total_epochs=EPOCHS)
 
-    # Calculate total epochs
-    total_epochs = EPOCHS + FINE_TUNE_EPOCHS
-
-    # Initial training progress callback
-    progress_callback_initial = ProgressCallback(total_epochs=total_epochs, offset=0)
-
-    # Initial training
+    # Train
     history = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
         class_weight=class_weight_dict,
-        callbacks=[model_checkpoint_callback, best_recall_checkpoint, progress_callback_initial, early_stopping],
+        callbacks=[checkpoint_acc, checkpoint_recall, early_stopping, progress_callback],
         verbose=2
     )
 
-    # Load the best model from training
-    print("Loading the best model...")
-    model = tf.keras.models.load_model(checkpoint_filepath)
+    # Load best recall model
+    best_recall_path = os.path.join(MODEL_DIR, 'best_recall_model.keras')
+    if os.path.exists(best_recall_path):
+        model = tf.keras.models.load_model(best_recall_path)
 
-    # Combine history from initial training
-    acc = history.history['accuracy']
-    val_acc = history.history['val_accuracy']
-
-    loss = history.history['loss']
-    val_loss = history.history['val_loss']
+    # ---------------------------------
+    # Plots
+    # ---------------------------------
+    acc = history.history.get('accuracy', [])
+    val_acc = history.history.get('val_accuracy', [])
+    loss_hist = history.history.get('loss', [])
+    val_loss_hist = history.history.get('val_loss', [])
 
     epochs_range = range(len(acc))
 
-    # Plot Accuracy
-    plt.figure(figsize=(8, 6))
-    plt.plot(epochs_range, acc, label='Training Accuracy')
-    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
-    plt.legend(loc='lower right')
-    plt.title('Training and Validation Accuracy')
-    plt.savefig(accuracy_plot_filename)
-    plt.close()
-    print(f"Accuracy plot saved to {accuracy_plot_filename}")
+    if len(acc) > 0:
+        plt.figure(figsize=(8, 6))
+        plt.plot(epochs_range, acc, label='Training Accuracy')
+        plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+        plt.legend(loc='lower right')
+        plt.title('Training and Validation Accuracy')
+        plt.savefig(accuracy_plot_filename)
+        plt.close()
+        print(f"Accuracy plot saved to {accuracy_plot_filename}")
 
-    # Plot Loss
-    plt.figure(figsize=(8, 6))
-    plt.plot(epochs_range, loss, label='Training Loss')
-    plt.plot(epochs_range, val_loss, label='Validation Loss')
-    plt.legend(loc='upper right')
-    plt.title('Training and Validation Loss')
-    plt.savefig(loss_plot_filename)
-    plt.close()
-    print(f"Loss plot saved to {loss_plot_filename}")
+    if len(loss_hist) > 0:
+        plt.figure(figsize=(8, 6))
+        plt.plot(epochs_range, loss_hist, label='Training Loss')
+        plt.plot(epochs_range, val_loss_hist, label='Validation Loss')
+        plt.legend(loc='upper right')
+        plt.title('Training and Validation Loss')
+        plt.savefig(loss_plot_filename)
+        plt.close()
+        print(f"Loss plot saved to {loss_plot_filename}")
 
+    # ---------------------------------
+    # Evaluation & threshold selection
+    # ---------------------------------
+    # Build full val tensors for thresholding
+    def load_val_array(paths):
+        X = []
+        for p in paths:
+            img = Image.open(p).convert('L')
+            shorter = min(img.size)
+            left = (img.width - shorter)//2
+            top = (img.height - shorter)//2
+            img = img.crop((left, top, left+shorter, top+shorter))
+            img = img.resize(IMG_SIZE, Image.Resampling.LANCZOS)
+            X.append(np.array(img, dtype=np.uint8))
+        X = np.array(X)
+        X = np.expand_dims(X, -1)  # (N,96,96,1) uint8
+        return X
 
-    # Evaluate the model on the validation set
-    print("Evaluating the model...")
-    val_images = []
-    val_labels_list = []
-    for image_path, label in zip(val_paths, val_labels):
-        image = Image.open(image_path).convert("L").resize(IMG_SIZE)  # Ensure grayscale
-        image = np.array(image).astype(np.float32) / 255.0
-        image = np.expand_dims(image, axis=-1)  # Add channel dimension: (96, 96, 1)
-        val_images.append(image)
-        val_labels_list.append(label)
-    val_images = np.array(val_images)
-    val_labels_list = np.array(val_labels_list)
+    val_images_u8 = load_val_array(val_paths)
+    # Predict probabilities
+    val_probs = model.predict(val_images_u8, batch_size=BATCH_SIZE, verbose=0)
+    val_pred_labels = np.argmax(val_probs, axis=1)
 
-    val_predictions = model.predict(val_images)
-    # Lower threshold for 'prey' (e.g., 0.2 instead of default 0.5)
-    prey_probs = val_predictions[:, CLASSES.index('prey')]
-    threshold = 0.5  # Lower threshold increases recall
+    # threshold for prey
+    y_true_prey = (np.array(val_labels) == prey_index).astype(int)
+    prey_probs = val_probs[:, prey_index]
+    prec, rec, thr = precision_recall_curve(y_true_prey, prey_probs)
+    f1 = 2*prec*rec/(prec+rec+1e-9)
+    best_idx = np.argmax(f1[:-1]) if len(f1) > 1 else 0
+    chosen_thr = float(thr[best_idx]) if len(thr) > 0 else 0.5
+    with open(threshold_filename, 'w') as f:
+        f.write(str(chosen_thr))
+    print("Chosen prey threshold:", chosen_thr)
 
-    # For 3 classes, you should assign 'prey' if above threshold, otherwise pick the highest of the other two
-    not_cat_idx = CLASSES.index('not_cat')
-    not_prey_idx = CLASSES.index('not_prey')
-    prey_idx = CLASSES.index('prey')
-
-    val_pred_labels = []
-    for probs in val_predictions:
-        if probs[prey_idx] > threshold:
-            val_pred_labels.append(prey_idx)
-        else:
-            # Choose the higher probability between 'not_cat' and 'not_prey'
-            if probs[not_cat_idx] > probs[not_prey_idx]:
-                val_pred_labels.append(not_cat_idx)
-            else:
-                val_pred_labels.append(not_prey_idx)
-    val_pred_labels = np.array(val_pred_labels)
-
-    # Generate classification report
+    # Classification report (default argmax)
     report = classification_report(
-        val_labels_list,
-        val_pred_labels,
-        target_names=CLASSES,
-        zero_division=0
+        val_labels, val_pred_labels, target_names=CLASSES, zero_division=0
     )
-
-    # Generate classification report as a dictionary
     report_dict = classification_report(
-        val_labels_list,
-        val_pred_labels,
-        target_names=CLASSES,
-        zero_division=0,
-        output_dict=True
+        val_labels, val_pred_labels, target_names=CLASSES, zero_division=0, output_dict=True
     )
 
-    # Calculate F1 score for the 'prey' class
-    f1_prey = f1_score(val_labels_list, val_pred_labels, labels=[CLASSES.index('prey')], average='weighted')
-    print(f"F1 Score for prey: {f1_prey}")
-
-    # Output metrics in JSON format for subprocess
-    output_metrics = {
-        "val_accuracy": history.history['val_accuracy'][-1],
-        "val_loss": history.history['val_loss'][-1],
-        "f1_score": f1_prey
-    }
-    print(json.dumps(output_metrics))
-
-    # Save the classification report as an HTML file
+    # Save HTML report
     report_template = """
     <html>
     <head>
@@ -457,7 +372,7 @@ if __name__ == '__main__':
                 <th>F1-Score</th>
                 <th>Support</th>
             </tr>
-            {% for label, metrics in report.items() if label != 'accuracy' and label != 'macro avg' and label != 'weighted avg' %}
+            {% for label, metrics in report.items() if label in classes %}
             <tr>
                 <td>{{ label }}</td>
                 <td>{{ '{0:.2f}'.format(metrics['precision']) }}</td>
@@ -470,86 +385,53 @@ if __name__ == '__main__':
                 <td colspan="4"><strong>Accuracy</strong></td>
                 <td><strong>{{ '{0:.2f}'.format(report['accuracy']) }}</strong></td>
             </tr>
-            <tr>
-                <td colspan="4"><strong>Macro Avg</strong></td>
-                <td></td>
-            </tr>
-            <tr>
-                <td>Precision</td>
-                <td colspan="4">{{ '{0:.2f}'.format(report['macro avg']['precision']) }}</td>
-            </tr>
-            <tr>
-                <td>Recall</td>
-                <td colspan="4">{{ '{0:.2f}'.format(report['macro avg']['recall']) }}</td>
-            </tr>
-            <tr>
-                <td>F1-Score</td>
-                <td colspan="4">{{ '{0:.2f}'.format(report['macro avg']['f1-score']) }}</td>
-            </tr>
         </table>
+        <p>Chosen prey threshold: {{ threshold }}</p>
     </body>
     </html>
     """
-
     template = Template(report_template)
-    report_html = template.render(report=report_dict)
-
-    # Save the report as an HTML file
+    report_html = template.render(report=report_dict, classes=CLASSES, threshold=chosen_thr)
     with open(report_filename, 'w') as f:
         f.write(report_html)
     print(f"Classification report saved to {report_filename}")
 
-    # Generate and save the confusion matrix plot
-    cm = confusion_matrix(val_labels_list, val_pred_labels)
-    # Optionally, abbreviate class labels for better fit
-    abbreviated_classes = ['Not Cat', 'Not Prey', 'Prey']
-
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(
-        cm, 
-        annot=True, 
-        fmt='d', 
-        cmap='Blues', 
-        xticklabels=abbreviated_classes, 
-        yticklabels=abbreviated_classes,
-        annot_kws={"size": 14}  # Increase the font size of annotations
-        )
-    plt.xlabel('Predicted Label', fontsize=14)
-    plt.ylabel('True Label', fontsize=14)
-    plt.title('Confusion Matrix', fontsize=16)
-    # Rotate x-axis labels for better readability
-    plt.xticks(rotation=45, ha='right', fontsize=10)
-    plt.yticks(fontsize=10)
-    # Adjust layout to prevent clipping of labels
+    # Confusion matrix
+    cm = confusion_matrix(val_labels, val_pred_labels, labels=[0,1])
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=CLASSES, yticklabels=CLASSES,
+                annot_kws={"size": 14})
+    plt.xlabel('Predicted', fontsize=12)
+    plt.ylabel('True', fontsize=12)
+    plt.title('Confusion Matrix', fontsize=14)
     plt.tight_layout()
     plt.savefig(confusion_matrix_filename)
     plt.close()
     print(f"Confusion matrix plot saved to {confusion_matrix_filename}")
 
-
-    # Save class weights to a JSON file
+    # Save class weights
     with open(class_weights_filename, 'w') as f:
         json.dump(class_weight_dict, f)
     print(f"Class weights saved to {class_weights_filename}")
 
+    # Save summary
     with open(model_summary_filename, 'w') as f:
         with redirect_stdout(f):
             model.summary()
     print(f"Model summary saved to {model_summary_filename}")
 
-    # Export the model
+    # -----------------------------
+    # Export: SavedModel -> INT8 TFLite -> .cc
+    # -----------------------------
     model_save_path = os.path.join(MODEL_DIR, 'my_model')
     print(f"Exporting the model to {model_save_path}...")
     model.export(model_save_path)
 
-    # Convert and quantize the model
-    print("Converting and quantizing the model...")
+    print("Converting and quantizing the model (full INT8 with uint8 I/O)...")
     converter = tf.lite.TFLiteConverter.from_saved_model(model_save_path)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.representative_dataset = representative_data_gen
-    converter.target_spec.supported_ops = [
-        tf.lite.OpsSet.TFLITE_BUILTINS_INT8
-    ]
+    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
     converter.inference_input_type = tf.uint8
     converter.inference_output_type = tf.uint8
     tflite_quant_model = converter.convert()
@@ -559,53 +441,18 @@ if __name__ == '__main__':
         f.write(tflite_quant_model)
     print(f"Quantized model saved to {quant_model_path}")
 
-    # Export as C array for firmware embedding (model.cc/model.h)
-    c_array_path = os.path.join(MODEL_DIR, f'{MODEL_NAME}.cc')
-    h_array_path = os.path.join(MODEL_DIR, f'{MODEL_NAME}.h')
-    array_name = "my_model_quant_tflite"
+    # Write a .cc file for ESP32
+    def convert_tflite_to_cc(tflite_model_path, cc_output_path):
+        with open(tflite_model_path, 'rb') as f:
+            model_bytes = f.read()
+        with open(cc_output_path, 'w') as f:
+            f.write('const unsigned char my_model_quant_tflite[] = {\n')
+            hex_array = [f'0x{b:02x}' for b in model_bytes]
+            for i in range(0, len(hex_array), 12):
+                f.write('  ' + ', '.join(hex_array[i:i+12]) + ',\n')
+            f.write('};\n')
+            f.write(f'const unsigned int my_model_quant_tflite_len = {len(model_bytes)};\n')
 
-    def tflite_to_c_array(byte_data, var_name):
-        hex_array = ','.join(str(b) for b in byte_data)
-        c_str = f'unsigned char {var_name}[] = {{{hex_array}}};\n'
-        c_str += f'unsigned int {var_name}_len = {len(byte_data)};\n'
-        return c_str
-
-    # Write .cc file
-    with open(c_array_path, 'w') as f:
-        f.write(tflite_to_c_array(tflite_quant_model, array_name))
-    print(f"C array model saved to {c_array_path}")
-
-    # Write .h file
-    with open(h_array_path, 'w') as f:
-        f.write(f'#ifndef MODEL_H\n#define MODEL_H\n\n')
-        f.write(f'extern unsigned char {array_name}[];\n')
-        f.write(f'extern unsigned int {array_name}_len;\n')
-        f.write(f'#endif // MODEL_H\n')
-    print(f"Header file saved to {h_array_path}")
-
-    print("Model ready for ESP32. Use the .tflite file for SD card/FS, or .cc/.h for firmware embedding.")
-    print(f"Randomly generated seed: {SEED}")
-    print("Classification Report:")
-    print(report)
-    print("Weights:")
-    print(class_weight_dict)
-
-# Interpretation of your classification report:
-# - 'not_cat': high precision (0.94), high recall (0.89)
-# - 'not_prey': good precision (0.80), very high recall (0.96)
-# - 'prey': high precision (0.94), moderate recall (0.65)
-# - Overall accuracy: 0.87
-
-# What this means:
-# - Your model is now well balanced: it detects most 'prey' (recall=0.65) with few false positives (precision=0.94).
-# - 'not_prey' is also well detected (recall=0.96).
-# - The class weights (especially for 'prey') helped the model focus on the minority class.
-
-# If you want even higher recall for 'prey', you can:
-# - Slightly increase the class weight for 'prey' (currently 7.09).
-# - Slightly lower the threshold for 'prey' in your prediction logic.
-# - But note: this may reduce precision and overall accuracy.
-
-# If you are satisfied with this balance, you can keep these settings.
-# If you want to tune further, adjust class weights and threshold as needed.
-
+    cc_output_path = os.path.join(MODEL_DIR, f'{MODEL_NAME}.cc')
+    convert_tflite_to_cc(quant_model_path, cc_output_path)
+    print(f"C model source file saved to {cc_output_path}")

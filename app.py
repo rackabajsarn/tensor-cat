@@ -17,7 +17,7 @@ import piexif
 from PIL import Image
 from PIL import ImageOps
 
-OFFLINE_MODE = os.environ.get('LOCAL_OFFLINE_MODE', '1') == '1'
+OFFLINE_MODE = os.environ.get('LOCAL_OFFLINE_MODE', '0') == '1'
 
 try:
     if OFFLINE_MODE:
