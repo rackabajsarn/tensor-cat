@@ -216,7 +216,7 @@ if __name__ == '__main__':
     )
     class_weight_dict = dict(enumerate(class_weights_arr))
     # Emphasize 'prey' a bit more
-    class_weight_dict[CLASSES.index('prey')] *= 2.0
+    # class_weight_dict[CLASSES.index('prey')] *= 2.0
 
     # Datasets
     AUTOTUNE = tf.data.AUTOTUNE
@@ -265,7 +265,7 @@ if __name__ == '__main__':
         monitor='val_recall_prey', mode='max', save_best_only=True
     )
     early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor='val_recall_prey', patience=5, mode='max', restore_best_weights=True
+        monitor='val_loss', patience=5, mode='min', restore_best_weights=True
     )
     progress_callback = ProgressCallback(total_epochs=EPOCHS)
 
@@ -341,10 +341,24 @@ if __name__ == '__main__':
     y_true_prey = (np.array(val_labels) == prey_index).astype(int)
     prey_probs = val_probs[:, prey_index]
     prec, rec, thr = precision_recall_curve(y_true_prey, prey_probs)
-    f1 = 2*prec*rec/(prec+rec+1e-9)
-    best_idx = np.argmax(f1[:-1]) if len(f1) > 1 else 0
+
+    # Require at least this precision for prey
+    MIN_PREC = 0.6  # tweak this: higher => fewer FPs, more FNs
+
+    best_idx = None
+    best_rec = -1.0
+
+    for i in range(len(thr)):
+        if prec[i] >= MIN_PREC and rec[i] > best_rec:
+            best_rec = rec[i]
+            best_idx = i
+
+    if best_idx is None:
+        # fallback: max F1
+        f1 = 2*prec*rec/(prec+rec+1e-9)
+        best_idx = np.argmax(f1[:-1]) if len(f1) > 1 else 0
+
     chosen_thr = float(thr[best_idx]) if len(thr) > 0 else 0.5
-    chosen_thr = max(chosen_thr, 0.7)
     with open(threshold_filename, 'w') as f:
         f.write(str(chosen_thr))
     print("Chosen prey threshold:", chosen_thr)
