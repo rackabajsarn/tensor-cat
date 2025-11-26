@@ -110,12 +110,12 @@ def save_model_version(scope, timestamp_str):
     """Save current model and reports as a new version."""
     if scope == 'server':
         models_dir = SERVER_MODELS_DIR
-        reports_src = os.path.join(app.static_folder, 'reports')
+        reports_src = os.path.join(app.static_folder, 'reports', 'server')
         model_src_dir = MODEL_DIR
         model_files = [MODEL_NAME]  # Server Coral TPU model
     else:
         models_dir = LOCAL_MODELS_DIR
-        reports_src = os.path.join(app.static_folder, 'reports', 'simple')
+        reports_src = os.path.join(app.static_folder, 'reports', 'local')
         model_src_dir = 'simple_model'
         model_files = [
             'my_simple_model_quant.tflite',
@@ -1123,8 +1123,8 @@ def send_image(mode, filename):
 
 @app.route('/model')
 def model():
-    server_weights_path = os.path.join(app.static_folder, 'reports', 'full', 'class_weights.json')
-    local_weights_path = os.path.join(app.static_folder, 'reports', 'simple', 'class_weights.json')
+    server_weights_path = os.path.join(app.static_folder, 'reports', 'server', 'class_weights.json')
+    local_weights_path = os.path.join(app.static_folder, 'reports', 'local', 'class_weights.json')
 
     class_weights_server = read_json_file(server_weights_path, {})
     class_weights_local = read_json_file(local_weights_path, {})
@@ -1142,33 +1142,33 @@ def model():
     batch_size_options = [16, 32, 48, 64]
 
     server_reports = {
-        'classification': static_asset_exists('reports/full/classification_report.html'),
-        'confusion': static_asset_exists('reports/full/images/confusion_matrix.png'),
-        'accuracy': static_asset_exists('reports/full/images/accuracy_plot.png'),
-        'loss': static_asset_exists('reports/full/images/loss_plot.png'),
-        'summary': static_asset_exists('reports/full/model_summary.txt')
+        'classification': static_asset_exists('reports/server/classification_report.html'),
+        'confusion': static_asset_exists('reports/server/images/confusion_matrix.png'),
+        'accuracy': static_asset_exists('reports/server/images/accuracy_plot.png'),
+        'loss': static_asset_exists('reports/server/images/loss_plot.png'),
+        'summary': static_asset_exists('reports/server/model_summary.txt')
     }
 
     local_reports = {
-        'classification': static_asset_exists('reports/simple/classification_report.html'),
-        'confusion': static_asset_exists('reports/simple/images/confusion_matrix.png'),
-        'accuracy': static_asset_exists('reports/simple/images/accuracy_plot.png'),
-        'loss': static_asset_exists('reports/simple/images/loss_plot.png'),
-        'summary': static_asset_exists('reports/simple/model_summary.txt')
+        'classification': static_asset_exists('reports/local/classification_report.html'),
+        'confusion': static_asset_exists('reports/local/images/confusion_matrix.png'),
+        'accuracy': static_asset_exists('reports/local/images/accuracy_plot.png'),
+        'loss': static_asset_exists('reports/local/images/loss_plot.png'),
+        'summary': static_asset_exists('reports/local/model_summary.txt')
     }
 
     # Parse classification reports and model summaries
     server_classification_data = parse_classification_report(
-        os.path.join(app.static_folder, 'reports', 'full' 'classification_report.html')
+        os.path.join(app.static_folder, 'reports', 'server', 'classification_report.html')
     )
     local_classification_data = parse_classification_report(
-        os.path.join(app.static_folder, 'reports', 'simple', 'classification_report.html')
+        os.path.join(app.static_folder, 'reports', 'local', 'classification_report.html')
     )
     server_model_summary = read_model_summary(
-        os.path.join(app.static_folder, 'reports', 'full', 'model_summary.txt')
+        os.path.join(app.static_folder, 'reports', 'server', 'model_summary.txt')
     )
     local_model_summary = read_model_summary(
-        os.path.join(app.static_folder, 'reports', 'simple', 'model_summary.txt')
+        os.path.join(app.static_folder, 'reports', 'local', 'model_summary.txt')
     )
 
     return render_template(
@@ -1288,9 +1288,9 @@ def activate_version(scope, version_name):
         # Copy reports back to active location
         reports_src = os.path.join(version_dir, 'reports')
         if scope == 'server':
-            reports_dest = os.path.join(app.static_folder, 'reports')
+            reports_dest = os.path.join(app.static_folder, 'reports', 'server')
         else:
-            reports_dest = os.path.join(app.static_folder, 'reports', 'simple')
+            reports_dest = os.path.join(app.static_folder, 'reports', 'local')
         
         if os.path.exists(reports_src):
             os.makedirs(reports_dest, exist_ok=True)
@@ -1405,9 +1405,9 @@ def serve_version_image(scope, version_name, filename):
         return jsonify({'error': 'File not allowed'}), 403
     
     models_dir = SERVER_MODELS_DIR if scope == 'server' else LOCAL_MODELS_DIR
-    reports_dir = os.path.join(models_dir, version_name, 'reports')
+    images_dir = os.path.join(models_dir, version_name, 'reports', 'images')
     
-    return send_from_directory(reports_dir, filename)
+    return send_from_directory(images_dir, filename)
 
 
 @app.route('/about')
