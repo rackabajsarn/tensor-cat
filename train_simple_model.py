@@ -136,13 +136,9 @@ def adjust_gamma(img):
 
 def preprocess_image_train(image_path, label):
     image, label = preprocess_image(image_path, label)
-    # Photometric-only augmentations; tiny translations
-    image = tf.image.random_brightness(image, 0.07)
-    image = tf.image.random_contrast(image, 0.9, 1.1)
-    image = adjust_gamma(image)
-    image = tf.image.random_jpeg_quality(image, 80, 100)
-    image = tf.pad(image, [[2,2],[2,2],[0,0]], mode='REFLECT')
-    image = tf.image.random_crop(image, size=[IMG_SIZE[0], IMG_SIZE[1], 1])
+    # Gentle photometric jitter only (no gamma/jpeg/pad/crop)
+    image = tf.image.random_brightness(image, 0.03)
+    image = tf.image.random_contrast(image, 0.95, 1.05)
     return image, label
 
 def preprocess_image_val(image_path, label):
@@ -181,12 +177,12 @@ def ds_block(filters):
 def build_model():
     inputs = tf.keras.Input(shape=(IMG_SIZE[0], IMG_SIZE[1], 1), dtype=tf.uint8)
     x = layers.Rescaling(1./255.0)(inputs)  # move normalization inside graph
-    x = ds_block(16)(x)
-    x = ds_block(32)(x)
+    x = ds_block(24)(x)
+    x = ds_block(48)(x)
     x = ds_block(64)(x)
     x = layers.Conv2D(96, 1, activation='relu')(x)
     x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dropout(0.3)(x)
+    x = layers.Dropout(0.35)(x)
     outputs = layers.Dense(len(CLASSES), activation='softmax')(x)
     return tf.keras.Model(inputs, outputs)
 
@@ -269,6 +265,10 @@ if __name__ == '__main__':
     )
     progress_callback = ProgressCallback(total_epochs=EPOCHS)
 
+    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
+        monitor='val_loss', factor=0.5, patience=2, min_lr=3e-5, verbose=1
+    )
+
     # Train
     history = model.fit(
         train_ds,
@@ -331,37 +331,48 @@ if __name__ == '__main__':
         X = np.array(X)
         X = np.expand_dims(X, -1)  # (N,96,96,1) uint8
         return X
-
-    val_images_u8 = load_val_array(val_paths)
+    val_images = load_val_array(val_paths)
+    # If the model expects float32, scale to [0,1]. If it expects uint8, keep as-is.
+    if model.inputs[0].dtype == tf.float32:
+        val_images = val_images.astype('float32') / 255.0
     # Predict probabilities
-    val_probs = model.predict(val_images_u8, batch_size=BATCH_SIZE, verbose=0)
+    val_probs = model.predict(val_images, batch_size=BATCH_SIZE, verbose=0)
     val_pred_labels = np.argmax(val_probs, axis=1)
 
     # threshold for prey
+    # --- Choose threshold by max F1 on 'prey' ---
     y_true_prey = (np.array(val_labels) == prey_index).astype(int)
-    prey_probs = val_probs[:, prey_index]
+    prey_probs   = val_probs[:, prey_index]
+
     prec, rec, thr = precision_recall_curve(y_true_prey, prey_probs)
-
-    # Require at least this precision for prey
-    MIN_PREC = 0.6  # tweak this: higher => fewer FPs, more FNs
-
-    best_idx = None
-    best_rec = -1.0
-
-    for i in range(len(thr)):
-        if prec[i] >= MIN_PREC and rec[i] > best_rec:
-            best_rec = rec[i]
-            best_idx = i
-
-    if best_idx is None:
-        # fallback: max F1
-        f1 = 2*prec*rec/(prec+rec+1e-9)
-        best_idx = np.argmax(f1[:-1]) if len(f1) > 1 else 0
-
+    # thr has length len(prec)-1; align F1 to thr indices
+    f1 = 2 * prec[:-1] * rec[:-1] / (prec[:-1] + rec[:-1] + 1e-9)
+    best_idx = int(np.argmax(f1)) if len(f1) > 0 else 0
     chosen_thr = float(thr[best_idx]) if len(thr) > 0 else 0.5
     with open(threshold_filename, 'w') as f:
         f.write(str(chosen_thr))
-    print("Chosen prey threshold:", chosen_thr)
+    print("Chosen prey threshold (max F1):", chosen_thr)
+
+    # --- Use the chosen threshold to make class predictions ---
+    val_pred_thresh = (prey_probs >= chosen_thr).astype(int)  # 1=prey, 0=not_prey
+
+    # Reports with thresholded predictions
+    report = classification_report(
+        val_labels, val_pred_thresh, target_names=CLASSES, zero_division=0
+    )
+    report_dict = classification_report(
+        val_labels, val_pred_thresh, target_names=CLASSES, zero_division=0, output_dict=True
+    )
+
+    # Confusion matrix with thresholded predictions
+    cm = confusion_matrix(val_labels, val_pred_thresh, labels=[0, 1])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=CLASSES)
+    plt.figure(figsize=(5, 4))
+    disp.plot(cmap="Blues", colorbar=True)
+    plt.title("Confusion Matrix (thresholded)")
+    plt.tight_layout()
+    plt.savefig(confusion_matrix_filename)
+    plt.close()
 
     # Classification report (default argmax)
     report = classification_report(
