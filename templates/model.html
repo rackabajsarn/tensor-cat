@@ -9,6 +9,7 @@
 
     {% set server_params = server_info.training_params %}
     {% set local_params = local_info.training_params %}
+    {% set selected_class_count = local_params.class_count if local_params.class_count is defined else local_class_default %}
 
     <section id="server-panel" class="model-panel active" aria-label="Server model configuration">
         <div class="panel-header">
@@ -172,6 +173,19 @@
                 <select id="local_batch_size" name="local_batch_size">
                     {% for size in batch_size_options %}
                         <option value="{{ size }}" {% if size == local_params.batch_size %}selected{% endif %}>{{ size }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="local_class_count">Classes</label>
+                <select id="local_class_count" name="local_class_count">
+                    {% for count in class_count_options %}
+                        {% if count == 2 %}
+                            {% set option_label = '2 classes: prey / not_prey' %}
+                        {% else %}
+                            {% set option_label = '3 classes: prey / not_prey / not_cat' %}
+                        {% endif %}
+                        <option value="{{ count }}" {% if count == selected_class_count %}selected{% endif %}>{{ option_label }}</option>
                     {% endfor %}
                 </select>
             </div>

@@ -23,17 +23,20 @@ import random
 # -----------------------------
 # Args & constants
 # -----------------------------
-parser = argparse.ArgumentParser(description='Train a small grayscale 96x96 model (binary prey vs not_prey) and export TFLite + .cc')
+parser = argparse.ArgumentParser(description='Train a small grayscale 96x96 model (prey-first output) and export TFLite + .cc')
 parser.add_argument('--epochs', type=int, default=40, help='Number of epochs for initial training.')
 parser.add_argument('--learning_rate', type=str, default='1e-3', help='Initial learning rate.')
 parser.add_argument('--batch_size', type=int, default=32, help='Batch size.')
 parser.add_argument('--seed', type=int, default=0, help='Random seed.')
+parser.add_argument('--class_count', type=int, choices=[2, 3], default=2,
+                    help='Number of output classes. Use 2 for [prey, not_prey] or 3 for [prey, not_prey, not_cat].')
 args = parser.parse_args()
 
 EPOCHS = args.epochs
 INIT_LR = float(args.learning_rate)
 BATCH_SIZE = args.batch_size
 SEED = args.seed
+CLASS_COUNT = args.class_count
 random.seed(SEED)
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
@@ -65,7 +68,10 @@ threshold_filename = os.path.join(REPORTS_DIR, 'prey_threshold.txt')
 # -----------------------------
 # Task setup
 # -----------------------------
-CLASSES = ['not_prey', 'prey']  # binary
+if CLASS_COUNT == 3:
+    CLASSES = ['prey', 'not_prey', 'not_cat']
+else:
+    CLASSES = ['prey', 'not_prey']
 IMG_SIZE = (96, 96)
 
 class ProgressCallback(tf.keras.callbacks.Callback):
@@ -104,9 +110,18 @@ def load_dataset(dataset_dir):
 def convert_labels(labels_list):
     labels_encoded = []
     for labels in labels_list:
-        # robust access
         prey = bool(labels.get('prey', False))
-        label = 'prey' if prey else 'not_prey'
+        cat = bool(labels.get('cat', False))
+        enter = bool(labels.get('entering', False))
+        morris = bool(labels.get('morris', False))
+        if prey:
+            label = 'prey'
+        elif cat and enter:
+            label = 'not_prey'
+        elif CLASS_COUNT == 3:
+            label = 'not_cat'
+        else:
+            label = 'not_prey'
         labels_encoded.append(CLASSES.index(label))
     return labels_encoded
 
@@ -205,12 +220,15 @@ if __name__ == '__main__':
         image_paths, labels_encoded, test_size=0.2, random_state=SEED, stratify=labels_encoded)
 
     # Class weights
+    unique_labels = np.unique(train_labels)
     class_weights_arr = class_weight.compute_class_weight(
         class_weight='balanced',
-        classes=np.unique(train_labels),
+        classes=unique_labels,
         y=train_labels
     )
-    class_weight_dict = dict(enumerate(class_weights_arr))
+    class_weight_dict = {int(label): weight for label, weight in zip(unique_labels, class_weights_arr)}
+    for idx in range(len(CLASSES)):
+        class_weight_dict.setdefault(idx, 1.0)
     # Emphasize 'prey' a bit more
     # class_weight_dict[CLASSES.index('prey')] *= 2.0
 
@@ -339,13 +357,11 @@ if __name__ == '__main__':
     val_probs = model.predict(val_images, batch_size=BATCH_SIZE, verbose=0)
     val_pred_labels = np.argmax(val_probs, axis=1)
 
-    # threshold for prey
-    # --- Choose threshold by max F1 on 'prey' ---
+    # threshold for prey (binary prey vs everything else)
     y_true_prey = (np.array(val_labels) == prey_index).astype(int)
-    prey_probs   = val_probs[:, prey_index]
+    prey_probs = val_probs[:, prey_index]
 
     prec, rec, thr = precision_recall_curve(y_true_prey, prey_probs)
-    # thr has length len(prec)-1; align F1 to thr indices
     f1 = 2 * prec[:-1] * rec[:-1] / (prec[:-1] + rec[:-1] + 1e-9)
     best_idx = int(np.argmax(f1)) if len(f1) > 0 else 0
     chosen_thr = float(thr[best_idx]) if len(thr) > 0 else 0.5
@@ -353,33 +369,22 @@ if __name__ == '__main__':
         f.write(str(chosen_thr))
     print("Chosen prey threshold (max F1):", chosen_thr)
 
-    # --- Use the chosen threshold to make class predictions ---
-    val_pred_thresh = (prey_probs >= chosen_thr).astype(int)  # 1=prey, 0=not_prey
-
-    # Reports with thresholded predictions
+    # Classification report (default argmax, full class set)
+    label_indices = list(range(len(CLASSES)))
     report = classification_report(
-        val_labels, val_pred_thresh, target_names=CLASSES, zero_division=0
+        val_labels,
+        val_pred_labels,
+        labels=label_indices,
+        target_names=CLASSES,
+        zero_division=0
     )
     report_dict = classification_report(
-        val_labels, val_pred_thresh, target_names=CLASSES, zero_division=0, output_dict=True
-    )
-
-    # Confusion matrix with thresholded predictions
-    cm = confusion_matrix(val_labels, val_pred_thresh, labels=[0, 1])
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=CLASSES)
-    plt.figure(figsize=(5, 4))
-    disp.plot(cmap="Blues", colorbar=True)
-    plt.title("Confusion Matrix (thresholded)")
-    plt.tight_layout()
-    plt.savefig(confusion_matrix_filename)
-    plt.close()
-
-    # Classification report (default argmax)
-    report = classification_report(
-        val_labels, val_pred_labels, target_names=CLASSES, zero_division=0
-    )
-    report_dict = classification_report(
-        val_labels, val_pred_labels, target_names=CLASSES, zero_division=0, output_dict=True
+        val_labels,
+        val_pred_labels,
+        labels=label_indices,
+        target_names=CLASSES,
+        zero_division=0,
+        output_dict=True
     )
 
     # Save HTML report
@@ -426,7 +431,7 @@ if __name__ == '__main__':
     # Confusion matrix (binary)
 
 
-    cm = confusion_matrix(val_labels, val_pred_labels, labels=[0, 1])
+    cm = confusion_matrix(val_labels, val_pred_labels, labels=label_indices)
     disp = ConfusionMatrixDisplay(
         confusion_matrix=cm,
         display_labels=CLASSES

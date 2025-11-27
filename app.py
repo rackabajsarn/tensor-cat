@@ -66,7 +66,8 @@ LOCAL_PARAM_DEFAULTS = {
     "epochs": 40,
     "learning_rate": '1e-3',
     "batch_size": 32,
-    "seed": 0
+    "seed": 0,
+    "class_count": 2
 }
 
 # Valid parameter ranges for local model training
@@ -74,7 +75,8 @@ LOCAL_PARAM_LIMITS = {
     "epochs": {"min": 10, "max": 120, "step": 5},
     "learning_rate": ['5e-4', '7.5e-4', '1e-3', '1.5e-3', '2e-3', '3e-3', '5e-3'],
     "batch_size": [16, 32, 48, 64],
-    "seed": {"min": 0, "max": 999999}
+    "seed": {"min": 0, "max": 999999},
+    "class_count": [2, 3]
 }
 
 
@@ -775,7 +777,7 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
         retraining_status['retraining'] = False
 
 
-def run_local_retraining(epochs, learning_rate, batch_size, seed):
+def run_local_retraining(epochs, learning_rate, batch_size, seed, class_count):
     global local_retraining_status
     with local_retrain_lock:
         logging.info("Starting local retrain")
@@ -799,7 +801,8 @@ def run_local_retraining(epochs, learning_rate, batch_size, seed):
             '--epochs', str(epochs),
             '--learning_rate', str(learning_rate),
             '--batch_size', str(batch_size),
-            '--seed', str(seed)
+            '--seed', str(seed),
+            '--class_count', str(class_count)
         ]
 
         process = subprocess.Popen(
@@ -861,7 +864,8 @@ def run_local_retraining(epochs, learning_rate, batch_size, seed):
             epochs=epochs,
             learning_rate=learning_rate,
             batch_size=batch_size,
-            seed=seed
+            seed=seed,
+            class_count=class_count
         )
         logging.info("Local model retrained successfully.")
 
@@ -948,7 +952,7 @@ def get_model_info():
 
 def update_model_info(section='server', last_trained=None, images_used=None, retraining=None,
                       epochs=None, fine_tune_epochs=None, learning_rate=None, fine_tune_at=None,
-                      batch_size=None, seed=None):
+                      batch_size=None, seed=None, class_count=None):
     data = get_model_info()
     section_defaults = SERVER_PARAM_DEFAULTS if section == 'server' else LOCAL_PARAM_DEFAULTS
     section_data = _ensure_section(data, section, section_defaults)
@@ -978,6 +982,8 @@ def update_model_info(section='server', last_trained=None, images_used=None, ret
             params['batch_size'] = batch_size
         if seed is not None:
             params['seed'] = seed
+        if class_count is not None:
+            params['class_count'] = class_count
 
     try:
         with open(MODEL_INFO_PATH, 'w') as f:
@@ -1140,6 +1146,7 @@ def model():
     learning_rates_server = ['5e-6', '6e-6', '7e-6', '8e-6', '9e-6', '1e-5', '2e-5', '3e-5', '4e-5', '5e-5']
     learning_rates_local = ['5e-4', '7.5e-4', '1e-3', '1.5e-3', '2e-3', '3e-3', '5e-3']
     batch_size_options = [16, 32, 48, 64]
+    class_count_options = LOCAL_PARAM_LIMITS['class_count']
 
     server_reports = {
         'classification': static_asset_exists('reports/server/classification_report.html'),
@@ -1186,6 +1193,8 @@ def model():
         learning_rates_server=learning_rates_server,
         learning_rates_local=learning_rates_local,
         batch_size_options=batch_size_options,
+        class_count_options=class_count_options,
+        local_class_default=LOCAL_PARAM_DEFAULTS['class_count'],
         server_reports=server_reports,
         local_reports=local_reports,
         server_classification_data=server_classification_data,
@@ -1454,6 +1463,7 @@ def retrain_local_model():
     learning_rate = request.form.get('local_learning_rate', default=LOCAL_PARAM_DEFAULTS['learning_rate'])
     batch_size = request.form.get('local_batch_size', default=LOCAL_PARAM_DEFAULTS['batch_size'], type=int)
     seed = request.form.get('local_seed', default=LOCAL_PARAM_DEFAULTS['seed'], type=int)
+    class_count = request.form.get('local_class_count', default=LOCAL_PARAM_DEFAULTS['class_count'], type=int)
 
     # Validate epochs
     epoch_limits = LOCAL_PARAM_LIMITS['epochs']
@@ -1477,9 +1487,13 @@ def retrain_local_model():
         flash(f"Seed must be between {seed_limits['min']} and {seed_limits['max']}.", 'danger')
         return redirect(url_for('model'))
 
+    if class_count not in LOCAL_PARAM_LIMITS['class_count']:
+        flash('Invalid class count selected for local training.', 'danger')
+        return redirect(url_for('model'))
+
     retrain_thread = threading.Thread(
         target=run_local_retraining,
-        args=(epochs, learning_rate, batch_size, seed)
+        args=(epochs, learning_rate, batch_size, seed, class_count)
     )
     retrain_thread.start()
 
