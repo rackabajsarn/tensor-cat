@@ -10,6 +10,7 @@
     {% set server_params = server_info.training_params %}
     {% set local_params = local_info.training_params %}
     {% set selected_class_count = local_params.class_count if local_params.class_count is defined else local_class_default %}
+    {% set selected_max_samples = local_params.max_samples_per_class if local_params.max_samples_per_class is defined else max_samples_default %}
 
     <section id="server-panel" class="model-panel active" aria-label="Server model configuration">
         <div class="panel-header">
@@ -188,6 +189,16 @@
                         <option value="{{ count }}" {% if count == selected_class_count %}selected{% endif %}>{{ option_label }}</option>
                     {% endfor %}
                 </select>
+            </div>
+            <div class="form-field">
+                <label for="local_max_samples_per_class">Max Samples Per Class (0 = all)</label>
+                <input type="number"
+                       id="local_max_samples_per_class"
+                       name="local_max_samples_per_class"
+                       value="{{ selected_max_samples }}"
+                       min="{{ max_samples_limits.min }}"
+                       max="{{ max_samples_limits.max }}"
+                       step="10">
             </div>
             <div class="form-field">
                 <label for="local_seed">Seed</label>

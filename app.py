@@ -17,7 +17,21 @@ import piexif
 from PIL import Image
 from PIL import ImageOps
 
-OFFLINE_MODE = os.environ.get('LOCAL_OFFLINE_MODE', '1') == '1'
+
+def _consume_flag(flag_name):
+    """Remove a CLI flag from sys.argv if present and report whether it was found."""
+    if flag_name in sys.argv:
+        sys.argv.remove(flag_name)
+        return True
+    return False
+
+
+if _consume_flag('--offline'):
+    OFFLINE_MODE = True
+elif _consume_flag('--online'):
+    OFFLINE_MODE = False
+else:
+    OFFLINE_MODE = False  # default behavior is online
 
 try:
     if OFFLINE_MODE:
@@ -67,7 +81,8 @@ LOCAL_PARAM_DEFAULTS = {
     "learning_rate": '1e-3',
     "batch_size": 32,
     "seed": 0,
-    "class_count": 2
+    "class_count": 2,
+    "max_samples_per_class": 0
 }
 
 # Valid parameter ranges for local model training
@@ -76,7 +91,8 @@ LOCAL_PARAM_LIMITS = {
     "learning_rate": ['5e-4', '7.5e-4', '1e-3', '1.5e-3', '2e-3', '3e-3', '5e-3'],
     "batch_size": [16, 32, 48, 64],
     "seed": {"min": 0, "max": 999999},
-    "class_count": [2, 3]
+    "class_count": [2, 3],
+    "max_samples_per_class": {"min": 0, "max": 1000}
 }
 
 
@@ -777,7 +793,7 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
         retraining_status['retraining'] = False
 
 
-def run_local_retraining(epochs, learning_rate, batch_size, seed, class_count):
+def run_local_retraining(epochs, learning_rate, batch_size, seed, class_count, max_samples_per_class):
     global local_retraining_status
     with local_retrain_lock:
         logging.info("Starting local retrain")
@@ -804,6 +820,9 @@ def run_local_retraining(epochs, learning_rate, batch_size, seed, class_count):
             '--seed', str(seed),
             '--class_count', str(class_count)
         ]
+
+        if max_samples_per_class > 0:
+            command.extend(['--max_samples_per_class', str(max_samples_per_class)])
 
         process = subprocess.Popen(
             command,
@@ -865,7 +884,8 @@ def run_local_retraining(epochs, learning_rate, batch_size, seed, class_count):
             learning_rate=learning_rate,
             batch_size=batch_size,
             seed=seed,
-            class_count=class_count
+            class_count=class_count,
+            max_samples_per_class=max_samples_per_class
         )
         logging.info("Local model retrained successfully.")
 
@@ -952,7 +972,7 @@ def get_model_info():
 
 def update_model_info(section='server', last_trained=None, images_used=None, retraining=None,
                       epochs=None, fine_tune_epochs=None, learning_rate=None, fine_tune_at=None,
-                      batch_size=None, seed=None, class_count=None):
+                      batch_size=None, seed=None, class_count=None, max_samples_per_class=None):
     data = get_model_info()
     section_defaults = SERVER_PARAM_DEFAULTS if section == 'server' else LOCAL_PARAM_DEFAULTS
     section_data = _ensure_section(data, section, section_defaults)
@@ -984,6 +1004,8 @@ def update_model_info(section='server', last_trained=None, images_used=None, ret
             params['seed'] = seed
         if class_count is not None:
             params['class_count'] = class_count
+        if max_samples_per_class is not None:
+            params['max_samples_per_class'] = max_samples_per_class
 
     try:
         with open(MODEL_INFO_PATH, 'w') as f:
@@ -1147,6 +1169,7 @@ def model():
     learning_rates_local = ['5e-4', '7.5e-4', '1e-3', '1.5e-3', '2e-3', '3e-3', '5e-3']
     batch_size_options = [16, 32, 48, 64]
     class_count_options = LOCAL_PARAM_LIMITS['class_count']
+    max_samples_limits = LOCAL_PARAM_LIMITS['max_samples_per_class']
 
     server_reports = {
         'classification': static_asset_exists('reports/server/classification_report.html'),
@@ -1195,6 +1218,8 @@ def model():
         batch_size_options=batch_size_options,
         class_count_options=class_count_options,
         local_class_default=LOCAL_PARAM_DEFAULTS['class_count'],
+        max_samples_limits=max_samples_limits,
+        max_samples_default=LOCAL_PARAM_DEFAULTS['max_samples_per_class'],
         server_reports=server_reports,
         local_reports=local_reports,
         server_classification_data=server_classification_data,
@@ -1464,6 +1489,11 @@ def retrain_local_model():
     batch_size = request.form.get('local_batch_size', default=LOCAL_PARAM_DEFAULTS['batch_size'], type=int)
     seed = request.form.get('local_seed', default=LOCAL_PARAM_DEFAULTS['seed'], type=int)
     class_count = request.form.get('local_class_count', default=LOCAL_PARAM_DEFAULTS['class_count'], type=int)
+    max_samples_per_class = request.form.get(
+        'local_max_samples_per_class',
+        default=LOCAL_PARAM_DEFAULTS['max_samples_per_class'],
+        type=int
+    )
 
     # Validate epochs
     epoch_limits = LOCAL_PARAM_LIMITS['epochs']
@@ -1491,9 +1521,14 @@ def retrain_local_model():
         flash('Invalid class count selected for local training.', 'danger')
         return redirect(url_for('model'))
 
+    sample_limits = LOCAL_PARAM_LIMITS['max_samples_per_class']
+    if max_samples_per_class is None or max_samples_per_class < sample_limits['min'] or max_samples_per_class > sample_limits['max']:
+        flash(f"Max samples per class must be between {sample_limits['min']} and {sample_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
     retrain_thread = threading.Thread(
         target=run_local_retraining,
-        args=(epochs, learning_rate, batch_size, seed, class_count)
+        args=(epochs, learning_rate, batch_size, seed, class_count, max_samples_per_class)
     )
     retrain_thread.start()
 

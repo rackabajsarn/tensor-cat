@@ -30,6 +30,10 @@ parser.add_argument('--batch_size', type=int, default=32, help='Batch size.')
 parser.add_argument('--seed', type=int, default=0, help='Random seed.')
 parser.add_argument('--class_count', type=int, choices=[2, 3], default=2,
                     help='Number of output classes. Use 2 for [prey, not_prey] or 3 for [prey, not_prey, not_cat].')
+parser.add_argument('--prefer_recall', action='store_true',
+                    help='Use the best recall checkpoint (binary only). Defaults to best accuracy.')
+parser.add_argument('--max_samples_per_class', type=int, default=0,
+                    help='Optional cap per class for training/validation (0 = use all samples).')
 args = parser.parse_args()
 
 EPOCHS = args.epochs
@@ -37,6 +41,8 @@ INIT_LR = float(args.learning_rate)
 BATCH_SIZE = args.batch_size
 SEED = args.seed
 CLASS_COUNT = args.class_count
+PREFER_RECALL = bool(args.prefer_recall and CLASS_COUNT == 2)
+MAX_SAMPLES_PER_CLASS = max(0, args.max_samples_per_class)
 random.seed(SEED)
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
@@ -125,6 +131,26 @@ def convert_labels(labels_list):
         labels_encoded.append(CLASSES.index(label))
     return labels_encoded
 
+
+def limit_samples_per_class(image_paths, labels_encoded, max_per_class, seed=0):
+    if max_per_class <= 0:
+        return image_paths, labels_encoded
+
+    grouped = defaultdict(list)
+    for path, label in zip(image_paths, labels_encoded):
+        grouped[label].append((path, label))
+
+    rng = random.Random(seed)
+    limited_pairs = []
+    for label, items in grouped.items():
+        rng.shuffle(items)
+        limited_pairs.extend(items[:max_per_class])
+
+    rng.shuffle(limited_pairs)
+    limited_paths = [p for p, _ in limited_pairs]
+    limited_labels = [lbl for _, lbl in limited_pairs]
+    return limited_paths, limited_labels
+
 # -----------------------------
 # Preprocessing (no external /255 — use model Rescaling layer instead)
 # -----------------------------
@@ -208,6 +234,13 @@ if __name__ == '__main__':
     # Load dataset
     image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
     labels_encoded = convert_labels(labels_list)
+
+    original_class_counts = Counter(labels_encoded)
+    print("Original class distribution:", {CLASSES[label]: count for label, count in original_class_counts.items()})
+
+    if MAX_SAMPLES_PER_CLASS > 0:
+        image_paths, labels_encoded = limit_samples_per_class(image_paths, labels_encoded, MAX_SAMPLES_PER_CLASS, seed=SEED)
+        print(f"Applied max {MAX_SAMPLES_PER_CLASS} samples per class for training.")
 
     # Class distribution
     class_counts = Counter(labels_encoded)
@@ -297,10 +330,25 @@ if __name__ == '__main__':
         verbose=2
     )
 
-    # Load best recall model
+    # Load preferred checkpoint
+    best_acc_path = os.path.join(MODEL_DIR, 'best_acc_model.keras')
     best_recall_path = os.path.join(MODEL_DIR, 'best_recall_model.keras')
-    if os.path.exists(best_recall_path):
-        model = tf.keras.models.load_model(best_recall_path)
+
+    checkpoint_choice = 'recall' if PREFER_RECALL else 'accuracy'
+    checkpoint_path = best_recall_path if PREFER_RECALL else best_acc_path
+
+    if not os.path.exists(checkpoint_path):
+        # Fallback to whichever checkpoint exists
+        fallback_path = best_acc_path if checkpoint_choice == 'recall' else best_recall_path
+        if os.path.exists(fallback_path):
+            checkpoint_path = fallback_path
+            checkpoint_choice = 'recall' if fallback_path == best_recall_path else 'accuracy'
+
+    if os.path.exists(checkpoint_path):
+        model = tf.keras.models.load_model(checkpoint_path)
+        print(f"Loaded best {checkpoint_choice} model from {checkpoint_path}")
+    else:
+        print("No best-checkpoint files found; continuing with current model weights.")
 
     # ---------------------------------
     # Plots
