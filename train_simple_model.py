@@ -13,12 +13,12 @@ from sklearn.utils import class_weight
 from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_recall_curve, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 import seaborn as sns
-from jinja2 import Template
 from contextlib import redirect_stdout
 import argparse
 from collections import Counter
 from collections import defaultdict
 import random
+import datetime
 
 # -----------------------------
 # Args & constants
@@ -34,6 +34,8 @@ parser.add_argument('--prefer_recall', action='store_true',
                     help='Use the best recall checkpoint (binary only). Defaults to best accuracy.')
 parser.add_argument('--max_samples_per_class', type=int, default=0,
                     help='Optional cap per class for training/validation (0 = use all samples).')
+parser.add_argument('--run_id', type=str, default=None,
+                    help='Optional explicit run/version id (used by app.py).')
 args = parser.parse_args()
 
 EPOCHS = args.epochs
@@ -43,33 +45,19 @@ SEED = args.seed
 CLASS_COUNT = args.class_count
 PREFER_RECALL = bool(args.prefer_recall and CLASS_COUNT == 2)
 MAX_SAMPLES_PER_CLASS = max(0, args.max_samples_per_class)
+RUN_ID = args.run_id
 random.seed(SEED)
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
 
 # -----------------------------
-# Paths
+# Paths (per-version under models/local/<run_id>)
 # -----------------------------
 DATASET_IMAGES_DIR = 'dataset/images'
 MODEL_DIR = 'simple_model'
 MODEL_NAME = 'my_simple_model_quant'
-STATIC_DIR = 'static'
-REPORTS_DIR = os.path.join(STATIC_DIR, 'reports', 'local')
-IMAGES_DIR = os.path.join(REPORTS_DIR, 'images')
-
-# Ensure directories exist
-os.makedirs(MODEL_DIR, exist_ok=True)
-os.makedirs(REPORTS_DIR, exist_ok=True)
-os.makedirs(IMAGES_DIR, exist_ok=True)
-
-# Report/plot files
-report_filename = os.path.join(REPORTS_DIR, 'classification_report.html')
-accuracy_plot_filename = os.path.join(IMAGES_DIR, 'accuracy_plot.png')
-loss_plot_filename = os.path.join(IMAGES_DIR, 'loss_plot.png')
-confusion_matrix_filename = os.path.join(IMAGES_DIR, 'confusion_matrix.png')
-class_weights_filename = os.path.join(REPORTS_DIR, 'class_weights.json')
-model_summary_filename = os.path.join(REPORTS_DIR, 'model_summary.txt')
-threshold_filename = os.path.join(REPORTS_DIR, 'prey_threshold.txt')
+MODELS_ROOT = 'models'
+LOCAL_MODELS_DIR = os.path.join(MODELS_ROOT, 'local')
 
 # -----------------------------
 # Task setup
@@ -230,6 +218,19 @@ def build_model():
 # Training
 # -----------------------------
 if __name__ == '__main__':
+    # Create versioned output directories for this run (use provided run_id if any)
+    run_id = RUN_ID or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    version_dir = os.path.join(LOCAL_MODELS_DIR, run_id)
+    reports_dir = os.path.join(version_dir, 'reports')
+    images_dir = os.path.join(reports_dir, 'images')
+    model_dir = os.path.join(version_dir, 'model')
+
+    os.makedirs(images_dir, exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
+
+    # Single JSON report file for this version
+    metrics_json_path = os.path.join(reports_dir, 'metrics.json')
+
     # Load dataset
     image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
     labels_encoded = convert_labels(labels_list)
@@ -279,9 +280,8 @@ if __name__ == '__main__':
 
     # Optional: dump a snapshot of preprocessed images for visual inspection
     try:
-        export_root = os.path.dirname(REPORTS_DIR)  # e.g. models/local/<run_id>
-        train_dump_dir = os.path.join(export_root, 'reports', 'images', 'train_set')
-        val_dump_dir = os.path.join(export_root, 'reports', 'images', 'val_set')
+        train_dump_dir = os.path.join(images_dir, 'train_set')
+        val_dump_dir = os.path.join(images_dir, 'val_set')
         os.makedirs(train_dump_dir, exist_ok=True)
         os.makedirs(val_dump_dir, exist_ok=True)
 
@@ -330,13 +330,13 @@ if __name__ == '__main__':
                  precision_prey, recall_prey]
     )
 
-    # Callbacks
+    # Callbacks - save checkpoints inside this run's versioned model directory
     checkpoint_acc = tf.keras.callbacks.ModelCheckpoint(
-        filepath=os.path.join(MODEL_DIR, 'best_acc_model.keras'),
+        filepath=os.path.join(model_dir, 'best_acc_model.keras'),
         monitor='val_accuracy', mode='max', save_best_only=True
     )
     checkpoint_recall = tf.keras.callbacks.ModelCheckpoint(
-        filepath=os.path.join(MODEL_DIR, 'best_recall_model.keras'),
+        filepath=os.path.join(model_dir, 'best_recall_model.keras'),
         monitor='val_recall_prey', mode='max', save_best_only=True
     )
     early_stopping = tf.keras.callbacks.EarlyStopping(
@@ -358,9 +358,9 @@ if __name__ == '__main__':
         verbose=2
     )
 
-    # Load preferred checkpoint
-    best_acc_path = os.path.join(MODEL_DIR, 'best_acc_model.keras')
-    best_recall_path = os.path.join(MODEL_DIR, 'best_recall_model.keras')
+    # Load preferred checkpoint from this run's versioned model directory
+    best_acc_path = os.path.join(model_dir, 'best_acc_model.keras')
+    best_recall_path = os.path.join(model_dir, 'best_recall_model.keras')
 
     checkpoint_choice = 'recall' if PREFER_RECALL else 'accuracy'
     checkpoint_path = best_recall_path if PREFER_RECALL else best_acc_path
@@ -378,35 +378,11 @@ if __name__ == '__main__':
     else:
         print("No best-checkpoint files found; continuing with current model weights.")
 
-    # ---------------------------------
-    # Plots
-    # ---------------------------------
+    # Collect curves for metrics.json (no separate plot files)
     acc = history.history.get('accuracy', [])
     val_acc = history.history.get('val_accuracy', [])
     loss_hist = history.history.get('loss', [])
     val_loss_hist = history.history.get('val_loss', [])
-
-    epochs_range = range(len(acc))
-
-    if len(acc) > 0:
-        plt.figure(figsize=(8, 6))
-        plt.plot(epochs_range, acc, label='Training Accuracy')
-        plt.plot(epochs_range, val_acc, label='Validation Accuracy')
-        plt.legend(loc='lower right')
-        plt.title('Training and Validation Accuracy')
-        plt.savefig(accuracy_plot_filename)
-        plt.close()
-        print(f"Accuracy plot saved to {accuracy_plot_filename}")
-
-    if len(loss_hist) > 0:
-        plt.figure(figsize=(8, 6))
-        plt.plot(epochs_range, loss_hist, label='Training Loss')
-        plt.plot(epochs_range, val_loss_hist, label='Validation Loss')
-        plt.legend(loc='upper right')
-        plt.title('Training and Validation Loss')
-        plt.savefig(loss_plot_filename)
-        plt.close()
-        print(f"Loss plot saved to {loss_plot_filename}")
 
     # ---------------------------------
     # Evaluation & threshold selection
@@ -441,8 +417,6 @@ if __name__ == '__main__':
     f1 = 2 * prec[:-1] * rec[:-1] / (prec[:-1] + rec[:-1] + 1e-9)
     best_idx = int(np.argmax(f1)) if len(f1) > 0 else 0
     chosen_thr = float(thr[best_idx]) if len(thr) > 0 else 0.5
-    with open(threshold_filename, 'w') as f:
-        f.write(str(chosen_thr))
     print("Chosen prey threshold (max F1):", chosen_thr)
 
     # For binary runs, also build thresholded predictions that match ESP usage
@@ -484,85 +458,61 @@ if __name__ == '__main__':
         "prey_threshold": chosen_thr,
     }
 
-    # Save HTML report
-    report_template = """
-    <html>
-    <head>
-        <title>Classification Report</title>
-        <link rel="stylesheet" type="text/css" href="/static/css/style.css">
-    </head>
-    <body class="dark-theme">
-        <h2>Training Parameters</h2>
-        <ul>
-            <li>Epochs: {{ params.epochs }}</li>
-            <li>Learning rate: {{ params.learning_rate }}</li>
-            <li>Batch size: {{ params.batch_size }}</li>
-            <li>Seed: {{ params.seed }}</li>
-            <li>Class count: {{ params.class_count }}</li>
-            <li>Max samples per class: {{ params.max_samples_per_class }}</li>
-            <li>Checkpoint used: {{ params.checkpoint_choice }}</li>
-            <li>Prey threshold: {{ params.prey_threshold }}</li>
-        </ul>
-        <table>
-            <tr>
-                <th>Class</th>
-                <th>Precision</th>
-                <th>Recall</th>
-                <th>F1-Score</th>
-                <th>Support</th>
-            </tr>
-            {% for label, metrics in report.items() if label in classes %}
-            <tr>
-                <td>{{ label }}</td>
-                <td>{{ '{0:.2f}'.format(metrics['precision']) }}</td>
-                <td>{{ '{0:.2f}'.format(metrics['recall']) }}</td>
-                <td>{{ '{0:.2f}'.format(metrics['f1-score']) }}</td>
-                <td>{{ metrics['support'] }}</td>
-            </tr>
-            {% endfor %}
-            <tr>
-                <td colspan="4"><strong>Accuracy</strong></td>
-                <td><strong>{{ '{0:.2f}'.format(report['accuracy']) }}</strong></td>
-            </tr>
-        </table>
-    </body>
-    </html>
-    """
-    template = Template(report_template)
-    report_html = template.render(report=report_dict, classes=CLASSES, params=report_params)
-    with open(report_filename, 'w') as f:
-        f.write(report_html)
-    print(f"Classification report saved to {report_filename}")
-
     # Confusion matrix, aligned with the same predictions used in the report
     cm = confusion_matrix(val_labels, val_pred_used, labels=label_indices)
-    disp = ConfusionMatrixDisplay(
-        confusion_matrix=cm,
-        display_labels=CLASSES
-    )
-    plt.figure(figsize=(5, 4))
-    disp.plot(cmap="Blues", colorbar=True)
-    plt.title("Confusion Matrix")
-    plt.tight_layout()
-    plt.savefig(confusion_matrix_filename)
-    plt.close()
-    print(f"Confusion matrix plot saved to {confusion_matrix_filename}")
+    # (Confusion matrix values are stored directly in metrics.json)
 
-    # Save class weights
-    with open(class_weights_filename, 'w') as f:
-        json.dump(class_weight_dict, f)
-    print(f"Class weights saved to {class_weights_filename}")
+    # Capture a structured model summary into metrics.json (no separate txt file)
+    from io import StringIO
+    _buf = StringIO()
+    with redirect_stdout(_buf):
+        model.summary()
+    summary_lines = _buf.getvalue().splitlines()
 
-    # Save summary
-    with open(model_summary_filename, 'w') as f:
-        with redirect_stdout(f):
-            model.summary()
-    print(f"Model summary saved to {model_summary_filename}")
+    # Very lightweight parser: keep raw text plus a simple per-layer list
+    layers_summary = []
+    for layer in model.layers:
+        cfg = layer.get_config() if hasattr(layer, 'get_config') else {}
+        layers_summary.append({
+            "name": layer.name,
+            "class_name": layer.__class__.__name__,
+            "output_shape": str(getattr(layer, 'output_shape', 'unknown')),
+            "params": int(getattr(layer, 'count_params', lambda: 0)() or 0),
+            "config": cfg,
+        })
+
+    structured_summary = {
+        "text": "\n".join(summary_lines),
+        "layers": layers_summary,
+        "total_params": int(model.count_params()),
+    }
 
     # -----------------------------
-    # Export: SavedModel -> INT8 TFLite -> .cc
+    # Aggregate metrics into JSON for Flask
     # -----------------------------
-    model_save_path = os.path.join(MODEL_DIR, 'my_model')
+    metrics = {
+        "classes": CLASSES,
+        "label_indices": label_indices,
+        "report": report_dict,
+        "confusion_matrix": cm.tolist(),
+        "training_params": report_params,
+        "model_summary": structured_summary,
+        "curves": {
+            "accuracy": list(map(float, acc)),
+            "val_accuracy": list(map(float, val_acc)),
+            "loss": list(map(float, loss_hist)),
+            "val_loss": list(map(float, val_loss_hist))
+        }
+    }
+
+    with open(metrics_json_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Metrics JSON saved to {metrics_json_path}")
+
+    # -----------------------------
+    # Export: SavedModel -> INT8 TFLite -> .cc (into version folder)
+    # -----------------------------
+    model_save_path = os.path.join(model_dir, 'my_model')
     print(f"Exporting the model to {model_save_path}...")
     model.export(model_save_path)
 
@@ -575,7 +525,7 @@ if __name__ == '__main__':
     converter.inference_output_type = tf.uint8
     tflite_quant_model = converter.convert()
 
-    quant_model_path = os.path.join(MODEL_DIR, f'{MODEL_NAME}.tflite')
+    quant_model_path = os.path.join(model_dir, f'{MODEL_NAME}.tflite')
     with open(quant_model_path, 'wb') as f:
         f.write(tflite_quant_model)
     print(f"Quantized model saved to {quant_model_path}")
@@ -592,6 +542,6 @@ if __name__ == '__main__':
             f.write('};\n')
             f.write(f'const unsigned int my_model_quant_tflite_len = {len(model_bytes)};\n')
 
-    cc_output_path = os.path.join(MODEL_DIR, f'{MODEL_NAME}.cc')
+    cc_output_path = os.path.join(model_dir, f'{MODEL_NAME}.cc')
     convert_tflite_to_cc(quant_model_path, cc_output_path)
     print(f"C model source file saved to {cc_output_path}")

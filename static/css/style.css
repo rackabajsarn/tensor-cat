@@ -1022,21 +1022,21 @@ body.dark-theme .report-card td {
     color: #eee;
 }
 
-.report-embed {
-    overflow: visible;
+.reports-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 25px;
 }
 
-.report-embed table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-.report-embed th,
-.report-embed td {
-    padding: 10px 14px;
-    text-align: left;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    color: #eee;
+.report-card {
+    position: relative;
+    background-color: #f9f9f9;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    display: flex;
+    flex-direction: column;
+    aspect-ratio: 1 / 1;
 }
 
 body:not(.dark-theme) .report-embed th,
@@ -1204,15 +1204,23 @@ body.dark-theme .report-meta {
 
 .reports-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, 1fr);  /* hard cap at 2 */
     gap: 25px;
+}
+@media (max-width: 900px) {
+    .reports-grid {
+        grid-template-columns: 1fr;        /* collapse to 1 column */
+    }
 }
 
 .report-card {
+    position: relative;
     background-color: #f9f9f9;
     border-radius: 10px;
     padding: 20px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    display: flex;
+    flex-direction: column;
 }
 
 body.dark-theme .report-card {
@@ -1282,6 +1290,19 @@ body.dark-theme .report-card table th {
 
 body.dark-theme .report-card pre {
     background-color: #2a2a2a;
+}
+
+/* Report card body for charts/matrix: fill remaining height */
+.report-card-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.report-card-body canvas {
+    max-width: 90%;
+    max-height: 90%;
 }
 
 /* Active Model Summary */

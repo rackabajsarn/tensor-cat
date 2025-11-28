@@ -23,36 +23,92 @@
     {% endif %}
 
     <div class="reports-grid">
-        {% if classification_data %}
+        {% if metrics %}
+        <div class="report-card">
+            <h3>Training Parameters</h3>
+            {% set params = metrics.training_params %}
+            {% if params %}
+            <ul>
+                {% for key, value in params.items() %}
+                <li><strong>{{ key }}:</strong> {{ value }}</li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p>No training parameter metadata available for this version.</p>
+            {% endif %}
+        </div>
+
         <div class="report-card">
             <h3>Classification Report</h3>
+            {% set report = metrics.report %}
+            {% if report %}
             <table>
-                {% for row in classification_data %}
                 <tr>
-                    {% for cell in row %}
-                    <td>{{ cell }}</td>
-                    {% endfor %}
+                    <th>Class</th>
+                    <th>Precision</th>
+                    <th>Recall</th>
+                    <th>F1-Score</th>
+                    <th>Support</th>
+                </tr>
+                {% for label, stats in report.items() if label not in ['accuracy', 'macro avg', 'weighted avg'] %}
+                <tr>
+                    <td>{{ label }}</td>
+                    <td>{{ '%.2f' % stats.precision }}</td>
+                    <td>{{ '%.2f' % stats.recall }}</td>
+                    <td>{{ '%.2f' % stats['f1-score'] }}</td>
+                    <td>{{ stats.support }}</td>
                 </tr>
                 {% endfor %}
+                <tr>
+                    <td colspan="4"><strong>Accuracy</strong></td>
+                    <td><strong>{{ '%.2f' % report.accuracy }}</strong></td>
+                </tr>
             </table>
+            {% else %}
+            <p>No classification report data available for this version.</p>
+            {% endif %}
         </div>
         {% endif %}
 
-        {% if has_confusion %}
+        {% if metrics and metrics.confusion_matrix %}
+        <div class="report-card">
+            <h3>Confusion Matrix</h3>
+            <div class="report-card-body">
+                <canvas id="confusionMatrixChart"></canvas>
+            </div>
+        </div>
+        {% elif has_confusion %}
         <div class="report-card">
             <h3>Confusion Matrix</h3>
             <img src="{{ url_for('serve_version_image', scope=scope, version_name=version_name, filename='confusion_matrix.png') }}" alt="Confusion matrix">
         </div>
         {% endif %}
 
-        {% if has_accuracy %}
+        {# Accuracy / loss charts: prefer curves from metrics, fall back to PNGs #}
+        {% set curves = metrics.curves if metrics else None %}
+
+        {% if curves and (curves.accuracy or curves.val_accuracy) %}
+        <div class="report-card">
+            <h3>Accuracy Over Epochs</h3>
+            <div class="report-card-body">
+                <canvas id="accuracyChart"></canvas>
+            </div>
+        </div>
+        {% elif has_accuracy %}
         <div class="report-card">
             <h3>Accuracy Over Epochs</h3>
             <img src="{{ url_for('serve_version_image', scope=scope, version_name=version_name, filename='accuracy_plot.png') }}" alt="Accuracy plot">
         </div>
         {% endif %}
 
-        {% if has_loss %}
+        {% if curves and (curves.loss or curves.val_loss) %}
+        <div class="report-card">
+            <h3>Loss Over Epochs</h3>
+            <div class="report-card-body">
+                <canvas id="lossChart"></canvas>
+            </div>
+        </div>
+        {% elif has_loss %}
         <div class="report-card">
             <h3>Loss Over Epochs</h3>
             <img src="{{ url_for('serve_version_image', scope=scope, version_name=version_name, filename='loss_plot.png') }}" alt="Loss plot">
@@ -81,16 +137,59 @@
         </div>
         {% endif %}
 
-        {% if model_summary %}
+        {% if metrics and metrics.model_summary %}
         <div class="report-card full-width">
             <h3>Model Summary</h3>
-            <pre>{{ model_summary }}</pre>
+
+            {# Prefer structured layer summary when available #}
+            {% if metrics.model_summary.layers %}
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Layer</th>
+                            <th>Type</th>
+                            <th>Output shape</th>
+                            <th>Params</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for layer in metrics.model_summary.layers %}
+                        <tr>
+                            <td>{{ layer.name }}</td>
+                            <td>{{ layer.class_name }}</td>
+                            <td>{{ layer.output_shape }}</td>
+                            <td>{{ layer.params }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if metrics.model_summary.total_params is not none %}
+            <p><strong>Total params:</strong> {{ metrics.model_summary.total_params }}</p>
+            {% endif %}
+
+            {# Optional: keep raw text as collapsible details if present #}
+            {% if metrics.model_summary.text %}
+            <details>
+                <summary>Show raw Keras summary</summary>
+                <pre>{{ metrics.model_summary.text }}</pre>
+            </details>
+            {% endif %}
+
+            {% else %}
+            {# Fallback for older runs that only stored plain text #}
+            <pre>{{ metrics.model_summary }}</pre>
+            {% endif %}
         </div>
         {% endif %}
     </div>
 </div>
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
 <script>
     function activateVersion(scope, versionName) {
         if (!confirm(`Activate version ${versionName} as the current ${scope} model?`)) {
@@ -111,5 +210,202 @@
                 alert('Failed to activate version.');
             });
     }
+
+    // Build accuracy/loss charts and confusion matrix from metrics when available
+    document.addEventListener('DOMContentLoaded', function () {
+        const metricsPayload = {{ {
+            'curves': metrics.curves if metrics and metrics.curves else {},
+            'confusion_matrix': metrics.confusion_matrix if metrics and metrics.confusion_matrix else [],
+            'classes': metrics.classes if metrics and metrics.classes else []
+        } | tojson | safe }};
+
+        const curves = metricsPayload.curves || {};
+        const cmData = metricsPayload.confusion_matrix || [];
+        const cmLabels = metricsPayload.classes || [];
+
+        if (curves && (curves.accuracy || curves.val_accuracy)) {
+            const ctxAcc = document.getElementById('accuracyChart');
+            if (ctxAcc) {
+                const accData = curves.accuracy || [];
+                const valAccData = curves.val_accuracy || [];
+                const labels = accData.length >= valAccData.length
+                    ? accData.map((_, i) => i + 1)
+                    : valAccData.map((_, i) => i + 1);
+
+                new Chart(ctxAcc, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: 'Training Accuracy',
+                                data: accData,
+                                borderColor: 'rgba(54, 162, 235, 1)',
+                                backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                                tension: 0.15,
+                            },
+                            {
+                                label: 'Validation Accuracy',
+                                data: valAccData,
+                                borderColor: 'rgba(75, 192, 192, 1)',
+                                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                                tension: 0.15,
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { title: { display: true, text: 'Epoch' } },
+                            y: { title: { display: true, text: 'Accuracy' }, min: 0, max: 1 },
+                        },
+                    },
+                });
+            }
+        }
+
+        if (curves && (curves.loss || curves.val_loss)) {
+            const ctxLoss = document.getElementById('lossChart');
+            if (ctxLoss) {
+                const lossData = curves.loss || [];
+                const valLossData = curves.val_loss || [];
+                const labels = lossData.length >= valLossData.length
+                    ? lossData.map((_, i) => i + 1)
+                    : valLossData.map((_, i) => i + 1);
+
+                new Chart(ctxLoss, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: 'Training Loss',
+                                data: lossData,
+                                borderColor: 'rgba(255, 99, 132, 1)',
+                                backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                                tension: 0.15,
+                            },
+                            {
+                                label: 'Validation Loss',
+                                data: valLossData,
+                                borderColor: 'rgba(255, 159, 64, 1)',
+                                backgroundColor: 'rgba(255, 159, 64, 0.2)',
+                                tension: 0.15,
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { title: { display: true, text: 'Epoch' } },
+                            y: { title: { display: true, text: 'Loss' }, min: 0 },
+                        },
+                    },
+                });
+            }
+        }
+
+        // Confusion matrix heatmap (square matrix of counts)
+        if (cmData && cmData.length && cmData[0].length) {
+            const ctxCM = document.getElementById('confusionMatrixChart');
+            if (ctxCM) {
+                const flatValues = cmData.flat();
+                const maxVal = flatValues.reduce((m, v) => Math.max(m, v), 0) || 1;
+
+                const matrixData = cmData.flatMap((row, i) =>
+                    row.map((v, j) => ({ x: j, y: i, v }))
+                );
+
+                new Chart(ctxCM, {
+                    type: 'matrix',
+                    data: {
+                        datasets: [
+                            {
+                                label: 'Confusion Matrix',
+                                data: matrixData,
+                                backgroundColor: function(ctx) {
+                                    var value = ctx.raw && ctx.raw.v ? ctx.raw.v : 0;
+                                    var ratio = value / maxVal;
+                                    var alpha = 0.25 + 0.75 * ratio;
+                                    return 'rgba(0, 200, 200, ' + alpha + ')';
+                                },
+                                borderWidth: 1,
+                                borderColor: 'rgba(0, 0, 0, 0.6)',
+                                width: function(chartCtx) {
+                                    var area = chartCtx.chart.chartArea;
+                                    if (!area) { return 0; }
+                                    var side = Math.min(area.right - area.left, area.bottom - area.top);
+                                    return side / cmData.length;
+                                },
+                                height: function(chartCtx) {
+                                    var area = chartCtx.chart.chartArea;
+                                    if (!area) { return 0; }
+                                    var side = Math.min(area.right - area.left, area.bottom - area.top);
+                                    return side / cmData.length;
+                                },
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    title: function(items) {
+                                        var item = items[0];
+                                        var i = item.raw.y;
+                                        var j = item.raw.x;
+                                        var trueLabel = cmLabels[i] || ('True ' + i);
+                                        var predLabel = cmLabels[j] || ('Pred ' + j);
+                                        return trueLabel + ' → ' + predLabel;
+                                    },
+                                    label: function(item) {
+                                        return 'Count: ' + item.raw.v;
+                                    },
+                                },
+                            },
+                            datalabels: {
+                                color: '#ffffff',
+                                font: { weight: 'bold', size: 11 },
+                                formatter: function(value) {
+                                    return value && value.v ? value.v : '';
+                                },
+                            },
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                position: 'top',
+                                min: -0.5,
+                                max: cmData[0].length - 0.5,
+                                offset: false,
+                                ticks: {
+                                    callback: function(v) { return cmLabels[v] || v; },
+                                    stepSize: 1,
+                                },
+                                grid: { display: false },
+                            },
+                            y: {
+                                type: 'linear',
+                                reverse: true,
+                                min: -0.5,
+                                max: cmData.length - 0.5,
+                                offset: false,
+                                ticks: {
+                                    callback: function(v) { return cmLabels[v] || v; },
+                                    stepSize: 1,
+                                },
+                                grid: { display: false },
+                            },
+                        },
+                    },
+                });
+            }
+        }
+    });
 </script>
 {% endblock %}

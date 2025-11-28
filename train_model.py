@@ -12,12 +12,12 @@ from sklearn.utils import class_weight
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 import matplotlib.pyplot as plt
 import seaborn as sns
-from jinja2 import Template
 from contextlib import redirect_stdout
 import argparse
 from collections import Counter
 from collections import defaultdict
 import random
+import datetime
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Train the model with specified parameters.')
@@ -25,6 +25,8 @@ parser.add_argument('--epochs', type=int, default=10, help='Number of epochs for
 parser.add_argument('--fine_tune_epochs', type=int, default=10, help='Number of epochs for fine-tuning.')
 parser.add_argument('--learning_rate', type=str, default='1e-5', help='Learning rate for training.')
 parser.add_argument('--fine_tune_at', type=int, default=120, help='Layer number to start fine-tuning from.')
+parser.add_argument('--run_id', type=str, default=None,
+                    help='Optional explicit run/version id (used by app.py).')
 
 args = parser.parse_args()
 
@@ -32,28 +34,18 @@ EPOCHS = args.epochs
 FINE_TUNE_EPOCHS = args.fine_tune_epochs
 LEARNING_RATE = float(args.learning_rate)
 FINE_TUNE_AT = args.fine_tune_at
+RUN_ID = args.run_id
 
 
 # Directories
 DATASET_IMAGES_DIR = 'dataset/images'
 MODEL_DIR = 'model'
 MODEL_NAME = 'my_model_quant'
-STATIC_DIR = 'static'
-REPORTS_DIR = os.path.join(STATIC_DIR, 'reports', 'server')
-IMAGES_DIR = os.path.join(REPORTS_DIR, 'images')
 
-# Ensure directories exist
-os.makedirs(MODEL_DIR, exist_ok=True)
-os.makedirs(REPORTS_DIR, exist_ok=True)
-os.makedirs(IMAGES_DIR, exist_ok=True)
+# NOTE: per-version reports live under models/server/<run_id>/reports, not static/
+MODELS_ROOT = 'models'
+SERVER_MODELS_DIR = os.path.join(MODELS_ROOT, 'server')
 
-# Update file paths accordingly
-report_filename = os.path.join(REPORTS_DIR, 'classification_report.html')
-accuracy_plot_filename = os.path.join(IMAGES_DIR, 'accuracy_plot.png')
-loss_plot_filename = os.path.join(IMAGES_DIR, 'loss_plot.png')
-confusion_matrix_filename = os.path.join(IMAGES_DIR, 'confusion_matrix.png')
-class_weights_filename = os.path.join(REPORTS_DIR, 'class_weights.json')
-model_summary_filename = os.path.join(REPORTS_DIR, 'model_summary.txt')
 
 # Classes
 CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
@@ -175,6 +167,24 @@ def representative_data_gen():
         yield [image]
 
 if __name__ == '__main__':
+    # Create versioned output directories for this run (use provided run_id if any)
+    run_id = RUN_ID or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    version_dir = os.path.join(SERVER_MODELS_DIR, run_id)
+    reports_dir = os.path.join(version_dir, 'reports')
+    images_dir = os.path.join(reports_dir, 'images')
+    model_dir = os.path.join(version_dir, 'model')
+
+    os.makedirs(images_dir, exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
+
+    # File paths within this version
+    accuracy_plot_filename = os.path.join(images_dir, 'accuracy_plot.png')
+    loss_plot_filename = os.path.join(images_dir, 'loss_plot.png')
+    confusion_matrix_filename = os.path.join(images_dir, 'confusion_matrix.png')
+    class_weights_filename = os.path.join(reports_dir, 'class_weights.json')
+    model_summary_filename = os.path.join(reports_dir, 'model_summary.txt')
+    metrics_json_filename = os.path.join(reports_dir, 'metrics.json')
+
     # Load dataset
     # print("Loading dataset...")
     # print("Epochs:", EPOCHS)
@@ -253,7 +263,8 @@ if __name__ == '__main__':
 
 
     # Define a custom callback to save the best model based on validation accuracy
-    checkpoint_filepath = os.path.join(MODEL_DIR, 'best_model.keras')
+    # Save the best model checkpoint inside this run's versioned model directory
+    checkpoint_filepath = os.path.join(model_dir, 'best_model.keras')
     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_filepath,
         save_weights_only=False,  # Save the full model
@@ -301,7 +312,8 @@ if __name__ == '__main__':
         )
 
         # Define a new checkpoint callback for fine-tuning
-        fine_tune_checkpoint_filepath = os.path.join(MODEL_DIR, 'best_model_fine_tuned.keras')
+        # Fine-tune checkpoint also lives in this run's versioned model directory
+        fine_tune_checkpoint_filepath = os.path.join(model_dir, 'best_model_fine_tuned.keras')
         fine_tune_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=fine_tune_checkpoint_filepath,
             save_weights_only=False,  # Save the full model
@@ -333,36 +345,35 @@ if __name__ == '__main__':
 
     # ... [After the fine-tuning code and before the evaluation] ...
 
-    # Plotting training & validation accuracy and loss
+    # Combine history from initial training and fine-tuning for metrics/curves
+    acc = history.history.get('accuracy', []) + history_fine.history.get('accuracy', [])
+    val_acc = history.history.get('val_accuracy', []) + history_fine.history.get('val_accuracy', [])
 
-    # Combine history from initial training and fine-tuning
-    acc = history.history['accuracy'] + history_fine.history['accuracy']
-    val_acc = history.history['val_accuracy'] + history_fine.history['val_accuracy']
-
-    loss = history.history['loss'] + history_fine.history['loss']
-    val_loss = history.history['val_loss'] + history_fine.history['val_loss']
+    loss = history.history.get('loss', []) + history_fine.history.get('loss', [])
+    val_loss = history.history.get('val_loss', []) + history_fine.history.get('val_loss', [])
 
     epochs_range = range(len(acc))
 
-    # Plot Accuracy
-    plt.figure(figsize=(8, 6))
-    plt.plot(epochs_range, acc, label='Training Accuracy')
-    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
-    plt.legend(loc='lower right')
-    plt.title('Training and Validation Accuracy')
-    plt.savefig(accuracy_plot_filename)
-    plt.close()
-    print(f"Accuracy plot saved to {accuracy_plot_filename}")
+    # Legacy PNG plots (can be removed once JS plotting is in place)
+    if len(acc) > 0:
+        plt.figure(figsize=(8, 6))
+        plt.plot(epochs_range, acc, label='Training Accuracy')
+        plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+        plt.legend(loc='lower right')
+        plt.title('Training and Validation Accuracy')
+        plt.savefig(accuracy_plot_filename)
+        plt.close()
+        print(f"Accuracy plot saved to {accuracy_plot_filename}")
 
-    # Plot Loss
-    plt.figure(figsize=(8, 6))
-    plt.plot(epochs_range, loss, label='Training Loss')
-    plt.plot(epochs_range, val_loss, label='Validation Loss')
-    plt.legend(loc='upper right')
-    plt.title('Training and Validation Loss')
-    plt.savefig(loss_plot_filename)
-    plt.close()
-    print(f"Loss plot saved to {loss_plot_filename}")
+    if len(loss) > 0:
+        plt.figure(figsize=(8, 6))
+        plt.plot(epochs_range, loss, label='Training Loss')
+        plt.plot(epochs_range, val_loss, label='Validation Loss')
+        plt.legend(loc='upper right')
+        plt.title('Training and Validation Loss')
+        plt.savefig(loss_plot_filename)
+        plt.close()
+        print(f"Loss plot saved to {loss_plot_filename}")
 
 
     # Evaluate the model on the validation set
@@ -409,64 +420,6 @@ if __name__ == '__main__':
     }
     print(json.dumps(output_metrics))
 
-    # Save the classification report as an HTML file
-    report_template = """
-    <html>
-    <head>
-        <title>Classification Report</title>
-        <link rel="stylesheet" type="text/css" href="/static/css/style.css">
-    </head>
-    <body class="dark-theme">
-        <table>
-            <tr>
-                <th>Class</th>
-                <th>Precision</th>
-                <th>Recall</th>
-                <th>F1-Score</th>
-                <th>Support</th>
-            </tr>
-            {% for label, metrics in report.items() if label != 'accuracy' and label != 'macro avg' and label != 'weighted avg' %}
-            <tr>
-                <td>{{ label }}</td>
-                <td>{{ '{0:.2f}'.format(metrics['precision']) }}</td>
-                <td>{{ '{0:.2f}'.format(metrics['recall']) }}</td>
-                <td>{{ '{0:.2f}'.format(metrics['f1-score']) }}</td>
-                <td>{{ metrics['support'] }}</td>
-            </tr>
-            {% endfor %}
-            <tr>
-                <td colspan="4"><strong>Accuracy</strong></td>
-                <td><strong>{{ '{0:.2f}'.format(report['accuracy']) }}</strong></td>
-            </tr>
-            <tr>
-                <td colspan="4"><strong>Macro Avg</strong></td>
-                <td></td>
-            </tr>
-            <tr>
-                <td>Precision</td>
-                <td colspan="4">{{ '{0:.2f}'.format(report['macro avg']['precision']) }}</td>
-            </tr>
-            <tr>
-                <td>Recall</td>
-                <td colspan="4">{{ '{0:.2f}'.format(report['macro avg']['recall']) }}</td>
-            </tr>
-            <tr>
-                <td>F1-Score</td>
-                <td colspan="4">{{ '{0:.2f}'.format(report['macro avg']['f1-score']) }}</td>
-            </tr>
-        </table>
-    </body>
-    </html>
-    """
-
-    template = Template(report_template)
-    report_html = template.render(report=report_dict)
-
-    # Save the report as an HTML file
-    with open(report_filename, 'w') as f:
-        f.write(report_html)
-    print(f"Classification report saved to {report_filename}")
-
     # Generate and save the confusion matrix plot
     cm = confusion_matrix(val_labels_list, val_pred_labels)
     # Optionally, abbreviate class labels for better fit
@@ -495,18 +448,55 @@ if __name__ == '__main__':
     print(f"Confusion matrix plot saved to {confusion_matrix_filename}")
 
 
-    # Save class weights to a JSON file
-    with open(class_weights_filename, 'w') as f:
-        json.dump(class_weight_dict, f)
-    print(f"Class weights saved to {class_weights_filename}")
+    # Aggregate metrics for Flask-driven reports, including structured summary and curves
+    from io import StringIO
+    _buf = StringIO()
+    with redirect_stdout(_buf):
+        model.summary()
+    summary_lines = _buf.getvalue().splitlines()
 
-    with open(model_summary_filename, 'w') as f:
-        with redirect_stdout(f):
-            model.summary()
-    print(f"Model summary saved to {model_summary_filename}")
+    layers_summary = []
+    for layer in model.layers:
+        cfg = layer.get_config() if hasattr(layer, 'get_config') else {}
+        layers_summary.append({
+            "name": layer.name,
+            "class_name": layer.__class__.__name__,
+            "output_shape": str(getattr(layer, 'output_shape', 'unknown')),
+            "params": int(getattr(layer, 'count_params', lambda: 0)() or 0),
+            "config": cfg,
+        })
 
-    # Export the model
-    model_save_path = os.path.join(MODEL_DIR, 'my_model')
+    structured_summary = {
+        "text": "\n".join(summary_lines),
+        "layers": layers_summary,
+        "total_params": int(model.count_params()),
+    }
+
+    metrics = {
+        "classes": CLASSES,
+        "report": report_dict,
+        "confusion_matrix": cm.tolist(),
+        "training_params": {
+            "epochs": EPOCHS,
+            "fine_tune_epochs": FINE_TUNE_EPOCHS,
+            "learning_rate": LEARNING_RATE,
+            "fine_tune_at": FINE_TUNE_AT
+        },
+        "model_summary": structured_summary,
+        "curves": {
+            "accuracy": list(map(float, acc)),
+            "val_accuracy": list(map(float, val_acc)),
+            "loss": list(map(float, loss)),
+            "val_loss": list(map(float, val_loss)),
+        }
+    }
+
+    with open(metrics_json_filename, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Metrics JSON saved to {metrics_json_filename}")
+
+    # Export the model into the versioned model directory
+    model_save_path = os.path.join(model_dir, 'my_model')
     print(f"Exporting the model to {model_save_path}...")
     model.export(model_save_path)
 
@@ -522,16 +512,16 @@ if __name__ == '__main__':
     converter.inference_output_type = tf.uint8
     tflite_quant_model = converter.convert()
 
-    quant_model_path = os.path.join(MODEL_DIR, f'{MODEL_NAME}.tflite')
+    quant_model_path = os.path.join(model_dir, f'{MODEL_NAME}.tflite')
     with open(quant_model_path, 'wb') as f:
         f.write(tflite_quant_model)
     print(f"Quantized model saved to {quant_model_path}")
 
     # Compile the model for the Edge TPU
     print("Compiling the model for the Edge TPU...")
-    compile_command = f"edgetpu_compiler -o {MODEL_DIR} {quant_model_path}"
+    compile_command = f"edgetpu_compiler -o {model_dir} {quant_model_path}"
     os.system(compile_command)
-    edgetpu_compiled_model = os.path.join(MODEL_DIR, f'{MODEL_NAME}_edgetpu.tflite')
+    edgetpu_compiled_model = os.path.join(model_dir, f'{MODEL_NAME}_edgetpu.tflite')
     print(f"Edge TPU model saved to {edgetpu_compiled_model}")
     print("Classification Report:")
     print(report)

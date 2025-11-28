@@ -79,22 +79,20 @@
                 </a>
             </div>
             <div class="summary-content">
-                {% if server_reports.confusion %}
-                <div class="summary-image">
-                    <img src="{{ url_for('static', filename='reports/server/images/confusion_matrix.png') }}" alt="Confusion Matrix">
-                </div>
-                {% endif %}
                 <div class="summary-metrics">
-                    {% if server_classification_data %}
+                    {% if active_server_metrics and active_server_metrics.report %}
                     <table class="compact-table">
-                        {% for row in server_classification_data[:6] %}
                         <tr>
-                            {% for cell in row %}
-                            <td>{{ cell }}</td>
-                            {% endfor %}
+                            <th>Metric</th>
+                            <th>Value</th>
                         </tr>
-                        {% endfor %}
+                        <tr>
+                            <td>Accuracy</td>
+                            <td>{{ '%.2f' % active_server_metrics.report.accuracy }}</td>
+                        </tr>
                     </table>
+                    {% else %}
+                    <p>No metrics available yet for this version.</p>
                     {% endif %}
                 </div>
             </div>
@@ -234,22 +232,20 @@
                 </a>
             </div>
             <div class="summary-content">
-                {% if local_reports.confusion %}
-                <div class="summary-image">
-                    <img src="{{ url_for('static', filename='reports/local/images/confusion_matrix.png') }}" alt="Confusion Matrix">
-                </div>
-                {% endif %}
                 <div class="summary-metrics">
-                    {% if local_classification_data %}
+                    {% if active_local_metrics and active_local_metrics.report %}
                     <table class="compact-table">
-                        {% for row in local_classification_data[:5] %}
                         <tr>
-                            {% for cell in row %}
-                            <td>{{ cell }}</td>
-                            {% endfor %}
+                            <th>Metric</th>
+                            <th>Value</th>
                         </tr>
-                        {% endfor %}
+                        <tr>
+                            <td>Accuracy</td>
+                            <td>{{ '%.2f' % active_local_metrics.report.accuracy }}</td>
+                        </tr>
                     </table>
+                    {% else %}
+                    <p>No metrics available yet for this version.</p>
                     {% endif %}
                 </div>
             </div>
