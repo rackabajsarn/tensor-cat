@@ -317,7 +317,7 @@
                 const matrixData = cmData.flatMap((row, i) =>
                     row.map((v, j) => ({ x: j, y: i, v }))
                 );
-
+                Chart.register(ChartDataLabels);
                 new Chart(ctxCM, {
                     type: 'matrix',
                     data: {
@@ -336,14 +336,14 @@
                                 width: function(chartCtx) {
                                     var area = chartCtx.chart.chartArea;
                                     if (!area) { return 0; }
-                                    var side = Math.min(area.right - area.left, area.bottom - area.top);
-                                    return side / cmData.length;
+                                    var totalWidth = area.right - area.left;
+                                    return totalWidth / cmData[0].length;
                                 },
                                 height: function(chartCtx) {
                                     var area = chartCtx.chart.chartArea;
                                     if (!area) { return 0; }
-                                    var side = Math.min(area.right - area.left, area.bottom - area.top);
-                                    return side / cmData.length;
+                                    var totalHeight = area.bottom - area.top;
+                                    return totalHeight / cmData.length;
                                 },
                             },
                         ],
