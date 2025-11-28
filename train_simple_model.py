@@ -119,7 +119,6 @@ def convert_labels(labels_list):
         prey = bool(labels.get('prey', False))
         cat = bool(labels.get('cat', False))
         enter = bool(labels.get('entering', False))
-        morris = bool(labels.get('morris', False))
         if prey:
             label = 'prey'
         elif cat and enter:
@@ -178,8 +177,8 @@ def adjust_gamma(img):
 def preprocess_image_train(image_path, label):
     image, label = preprocess_image(image_path, label)
     # Gentle photometric jitter only (no gamma/jpeg/pad/crop)
-    image = tf.image.random_brightness(image, 0.03)
-    image = tf.image.random_contrast(image, 0.95, 1.05)
+    #image = tf.image.random_brightness(image, 0.03)
+    #image = tf.image.random_contrast(image, 0.95, 1.05)
     return image, label
 
 def preprocess_image_val(image_path, label):
@@ -277,6 +276,35 @@ if __name__ == '__main__':
         .map(preprocess_image_val, num_parallel_calls=AUTOTUNE)\
         .batch(BATCH_SIZE)\
         .prefetch(AUTOTUNE)
+
+    # Optional: dump a snapshot of preprocessed images for visual inspection
+    try:
+        export_root = os.path.dirname(REPORTS_DIR)  # e.g. models/local/<run_id>
+        train_dump_dir = os.path.join(export_root, 'reports', 'images', 'train_set')
+        val_dump_dir = os.path.join(export_root, 'reports', 'images', 'val_set')
+        os.makedirs(train_dump_dir, exist_ok=True)
+        os.makedirs(val_dump_dir, exist_ok=True)
+
+        def _save_sample_batch(dataset, dump_dir, prefix, max_batches=3):
+            batch_idx = 0
+            for batch_images, batch_labels in dataset.take(max_batches):
+                batch_images_np = batch_images.numpy()
+                batch_labels_np = batch_labels.numpy()
+                for i in range(batch_images_np.shape[0]):
+                    img = batch_images_np[i]
+                    if img.ndim == 3 and img.shape[-1] == 1:
+                        img = img[:, :, 0]
+                    img_pil = Image.fromarray(img.astype(np.uint8), mode='L')
+                    label_idx = int(batch_labels_np[i])
+                    label_name = CLASSES[label_idx] if 0 <= label_idx < len(CLASSES) else 'unknown'
+                    filename = f"{prefix}_b{batch_idx}_i{i}_{label_name}.png"
+                    img_pil.save(os.path.join(dump_dir, filename))
+                batch_idx += 1
+
+        _save_sample_batch(train_ds, train_dump_dir, 'train')
+        _save_sample_batch(val_ds, val_dump_dir, 'val')
+    except Exception as e:
+        print(f"Warning: failed to dump preprocessed images: {e}")
 
     # Model & optimizer
     model = build_model()
@@ -417,23 +445,44 @@ if __name__ == '__main__':
         f.write(str(chosen_thr))
     print("Chosen prey threshold (max F1):", chosen_thr)
 
-    # Classification report (default argmax, full class set)
-    label_indices = list(range(len(CLASSES)))
+    # For binary runs, also build thresholded predictions that match ESP usage
+    if CLASS_COUNT == 2:
+        # prey=1, not_prey=0 using the chosen threshold
+        val_pred_used = (prey_probs >= chosen_thr).astype(int)
+        label_indices = [0, 1]
+    else:
+        # For 3-class, fall back to standard argmax multiclass predictions
+        val_pred_used = val_pred_labels
+        label_indices = list(range(len(CLASSES)))
+
+    # Classification report based on the chosen prediction scheme
     report = classification_report(
         val_labels,
-        val_pred_labels,
+        val_pred_used,
         labels=label_indices,
         target_names=CLASSES,
         zero_division=0
     )
     report_dict = classification_report(
         val_labels,
-        val_pred_labels,
+        val_pred_used,
         labels=label_indices,
         target_names=CLASSES,
         zero_division=0,
         output_dict=True
     )
+
+    # Prepare training/eval parameters for the report
+    report_params = {
+        "epochs": EPOCHS,
+        "learning_rate": INIT_LR,
+        "batch_size": BATCH_SIZE,
+        "seed": SEED,
+        "class_count": CLASS_COUNT,
+        "max_samples_per_class": MAX_SAMPLES_PER_CLASS,
+        "checkpoint_choice": checkpoint_choice,
+        "prey_threshold": chosen_thr,
+    }
 
     # Save HTML report
     report_template = """
@@ -443,6 +492,17 @@ if __name__ == '__main__':
         <link rel="stylesheet" type="text/css" href="/static/css/style.css">
     </head>
     <body class="dark-theme">
+        <h2>Training Parameters</h2>
+        <ul>
+            <li>Epochs: {{ params.epochs }}</li>
+            <li>Learning rate: {{ params.learning_rate }}</li>
+            <li>Batch size: {{ params.batch_size }}</li>
+            <li>Seed: {{ params.seed }}</li>
+            <li>Class count: {{ params.class_count }}</li>
+            <li>Max samples per class: {{ params.max_samples_per_class }}</li>
+            <li>Checkpoint used: {{ params.checkpoint_choice }}</li>
+            <li>Prey threshold: {{ params.prey_threshold }}</li>
+        </ul>
         <table>
             <tr>
                 <th>Class</th>
@@ -465,21 +525,17 @@ if __name__ == '__main__':
                 <td><strong>{{ '{0:.2f}'.format(report['accuracy']) }}</strong></td>
             </tr>
         </table>
-        <p>Chosen prey threshold: {{ threshold }}</p>
     </body>
     </html>
     """
     template = Template(report_template)
-    report_html = template.render(report=report_dict, classes=CLASSES, threshold=chosen_thr)
+    report_html = template.render(report=report_dict, classes=CLASSES, params=report_params)
     with open(report_filename, 'w') as f:
         f.write(report_html)
     print(f"Classification report saved to {report_filename}")
 
-    # Confusion matrix
-    # Confusion matrix (binary)
-
-
-    cm = confusion_matrix(val_labels, val_pred_labels, labels=label_indices)
+    # Confusion matrix, aligned with the same predictions used in the report
+    cm = confusion_matrix(val_labels, val_pred_used, labels=label_indices)
     disp = ConfusionMatrixDisplay(
         confusion_matrix=cm,
         display_labels=CLASSES

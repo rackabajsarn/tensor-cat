@@ -700,9 +700,10 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
             return redirect(url_for('model'))
 
         # Path to the virtual environment's Python interpreter
-        VENV_PATH = '/venv/coral'  # Adjust as per your virtual environment's path
+        # VENV_PATH = '/venv/coral'  # Adjust as per your virtual environment's path
         train_script_path = os.path.join(os.getcwd(), 'train_model.py')
-        python_executable = os.path.join(VENV_PATH, 'bin', 'python')
+        #python_executable = os.path.join(VENV_PATH, 'bin', 'python')
+        python_executable = sys.executable  # Use the current Python interpreter
         
         # Build the command for main Coral TPU model
         command = [
