@@ -149,7 +149,8 @@ def preprocess_image(image_path, label):
     w = tf.shape(image)[1]
     shorter_side = tf.minimum(h, w)
     image = tf.image.resize_with_crop_or_pad(image, shorter_side, shorter_side)
-    image = tf.image.resize(image, IMG_SIZE, method='bilinear', antialias=True)
+    image = tf.image.resize_with_crop_or_pad(image, 384, 384)
+    image = tf.image.resize(image, IMG_SIZE, method='nearest')
     # keep dtype uint8; Rescaling layer will scale to 0..1
     return image, label
 
