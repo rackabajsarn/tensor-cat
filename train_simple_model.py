@@ -530,6 +530,55 @@ if __name__ == '__main__':
         f.write(tflite_quant_model)
     print(f"Quantized model saved to {quant_model_path}")
 
+    # Extract TFLite model details
+    def get_tflite_details(model_path):
+        interpreter = tf.lite.Interpreter(model_path=model_path)
+        interpreter.allocate_tensors()
+        
+        # Get ops used
+        ops = set()
+        for op in interpreter._get_ops_details():
+            ops.add(op['op_name'])
+        
+        # Get input/output details
+        input_details = interpreter.get_input_details()[0]
+        output_details = interpreter.get_output_details()[0]
+        
+        # Estimate arena size (sum of all tensor sizes)
+        arena_estimate = 0
+        for t in interpreter.get_tensor_details():
+            size = 1
+            for dim in t['shape']:
+                size *= dim
+            arena_estimate += size
+        
+        # Get file size
+        file_size = os.path.getsize(model_path)
+        
+        return {
+            "file_size_bytes": file_size,
+            "file_size_kb": round(file_size / 1024, 2),
+            "ops": sorted(list(ops)),
+            "input_shape": input_details['shape'].tolist(),
+            "input_dtype": str(input_details['dtype']),
+            "output_shape": output_details['shape'].tolist(),
+            "output_dtype": str(output_details['dtype']),
+            "arena_estimate_bytes": arena_estimate,
+            "arena_estimate_kb": round(arena_estimate / 1024, 2),
+            "quantization": input_details.get('quantization', None),
+        }
+    
+    tflite_details = get_tflite_details(quant_model_path)
+    print(f"TFLite model size: {tflite_details['file_size_kb']} KB")
+    print(f"TFLite ops: {', '.join(tflite_details['ops'])}")
+    print(f"Estimated arena: {tflite_details['arena_estimate_kb']} KB")
+    
+    # Update metrics with TFLite details
+    metrics["tflite_details"] = tflite_details
+    with open(metrics_json_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Updated metrics JSON with TFLite details")
+
     # Write a .cc file for ESP32
     def convert_tflite_to_cc(tflite_model_path, cc_output_path):
         with open(tflite_model_path, 'rb') as f:

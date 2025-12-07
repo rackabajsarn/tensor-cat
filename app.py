@@ -650,19 +650,25 @@ local_retrain_lock = threading.Lock()
 
 retraining = False
 
-def upload_model_to_esp32():
-    """Upload the simple TFLite model to ESP32 via HTTP"""
+def upload_model_to_esp32(version_name=None):
+    """Upload the simple TFLite model to ESP32 via HTTP.
+
+    If version_name is provided, upload that local version; otherwise use the current active local model.
+    """
     try:
         if OFFLINE_MODE:
             logging.info("Offline mode - skipping ESP32 model upload.")
             return False
-        # Prefer the active local version's model, fall back to legacy simple_model path
-        active = get_active_models()
-        local_version = active.get('local')
-        if local_version:
-            model_path = os.path.join(LOCAL_MODELS_DIR, local_version, 'model', 'my_simple_model_quant.tflite')
+        # Prefer the provided version; otherwise use the active local version; otherwise legacy simple_model
+        if version_name:
+            model_path = os.path.join(LOCAL_MODELS_DIR, version_name, 'model', 'my_simple_model_quant.tflite')
         else:
-            model_path = os.path.join('simple_model', 'my_simple_model_quant.tflite')
+            active = get_active_models()
+            local_version = active.get('local')
+            if local_version:
+                model_path = os.path.join(LOCAL_MODELS_DIR, local_version, 'model', 'my_simple_model_quant.tflite')
+            else:
+                model_path = os.path.join('simple_model', 'my_simple_model_quant.tflite')
         if not os.path.exists(model_path):
             logging.error(f"Simple model file not found at {model_path}")
             return False
@@ -1317,6 +1323,13 @@ def activate_version(scope, version_name):
                 dest_item = os.path.join(model_dest_dir, item)
                 if os.path.isfile(src_item):
                     shutil.copy2(src_item, dest_item)
+        
+        # For local scope, upload to ESP32 before marking active
+        if scope == 'local':
+            success = upload_model_to_esp32(version_name)
+            if not success:
+                logging.error(f"Failed to upload local model {version_name} to ESP32; not activating.")
+                return jsonify({'error': 'Upload to ESP32 failed; model not activated'}), 500
         
         # Copy reports back to active location
         reports_src = os.path.join(version_dir, 'reports')

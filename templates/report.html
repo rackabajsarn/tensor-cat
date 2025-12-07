@@ -181,6 +181,39 @@
             {# Fallback for older runs that only stored plain text #}
             <pre>{{ metrics.model_summary }}</pre>
             {% endif %}
+
+            {# TFLite Model Details #}
+            {% if metrics.tflite_details %}
+            <h4 style="margin-top: 1.5rem;">TFLite Model Details</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 0.5rem;">
+                <div>
+                    <strong>File Size:</strong> {{ metrics.tflite_details.file_size_kb }} KB
+                </div>
+                <div>
+                    <strong>Input Shape:</strong> {{ metrics.tflite_details.input_shape }}
+                </div>
+                <div>
+                    <strong>Output Shape:</strong> {{ metrics.tflite_details.output_shape }}
+                </div>
+                <div>
+                    <strong>Input Type:</strong> {{ metrics.tflite_details.input_dtype }}
+                </div>
+                <div>
+                    <strong>Output Type:</strong> {{ metrics.tflite_details.output_dtype }}
+                </div>
+                <div>
+                    <strong>Arena Estimate:</strong> {{ metrics.tflite_details.arena_estimate_kb }} KB
+                </div>
+            </div>
+            <div style="margin-top: 1rem;">
+                <strong>TFLite Ops Used ({{ metrics.tflite_details.ops|length }}):</strong>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
+                    {% for op in metrics.tflite_details.ops %}
+                    <span style="background: var(--bg-color); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace; font-size: 0.85rem;">{{ op }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
     </div>
