@@ -36,6 +36,10 @@ parser.add_argument('--max_samples_per_class', type=int, default=0,
                     help='Optional cap per class for training/validation (0 = use all samples).')
 parser.add_argument('--run_id', type=str, default=None,
                     help='Optional explicit run/version id (used by app.py).')
+parser.add_argument('--width_mult', type=float, default=0.75,
+                    help='Width multiplier to shrink/expand channel counts for a lighter/heavier model.')
+parser.add_argument('--dropout', type=float, default=0.30,
+                    help='Dropout rate applied before the classifier head.')
 args = parser.parse_args()
 
 EPOCHS = args.epochs
@@ -46,6 +50,8 @@ CLASS_COUNT = args.class_count
 PREFER_RECALL = bool(args.prefer_recall and CLASS_COUNT == 2)
 MAX_SAMPLES_PER_CLASS = max(0, args.max_samples_per_class)
 RUN_ID = args.run_id
+WIDTH_MULT = max(0.4, float(args.width_mult))  # clamp to avoid degenerate shapes
+DROPOUT_RATE = min(max(0.0, float(args.dropout)), 0.8)
 random.seed(SEED)
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
@@ -195,23 +201,39 @@ def representative_data_gen():
 # -----------------------------
 # Model (tiny depthwise-separable CNN)
 # -----------------------------
-def ds_block(filters):
-    return tf.keras.Sequential([
-        tf.keras.layers.DepthwiseConv2D(3, padding='same', activation='relu'),
-        tf.keras.layers.Conv2D(filters, 1, activation='relu'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.MaxPooling2D(2)
-    ])
+def _dw_sep_block(filters, stride=2, dropout=0.0):
+    # Depthwise + pointwise with stride for downsampling; avoids extra pooling ops.
+    def apply(x):
+        x = layers.DepthwiseConv2D(3, strides=stride, padding='same', use_bias=False)(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.Activation('relu')(x)
+        x = layers.Conv2D(filters, 1, padding='same', use_bias=False)(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.Activation('relu')(x)
+        if dropout > 0.0:
+            x = layers.Dropout(dropout)(x)
+        return x
+    return apply
+
+def _scaled_channels(base):
+    return max(8, int(round(base * WIDTH_MULT)))
 
 def build_model():
     inputs = tf.keras.Input(shape=(IMG_SIZE[0], IMG_SIZE[1], 1), dtype=tf.uint8)
-    x = layers.Rescaling(1./255.0)(inputs)  # move normalization inside graph
-    x = ds_block(24)(x)
-    x = ds_block(48)(x)
-    x = ds_block(64)(x)
-    x = layers.Conv2D(96, 1, activation='relu')(x)
+    x = layers.Rescaling(1./255.0)(inputs)  # keep uint8 input for INT8 quantization
+
+    # Lightweight stem
+    x = layers.Conv2D(_scaled_channels(16), 3, strides=2, padding='same', use_bias=False)(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
+
+    # Slimmed depthwise blocks
+    x = _dw_sep_block(_scaled_channels(24), stride=2, dropout=DROPOUT_RATE * 0.3)(x)
+    x = _dw_sep_block(_scaled_channels(32), stride=2, dropout=DROPOUT_RATE * 0.3)(x)
+    x = _dw_sep_block(_scaled_channels(40), stride=1, dropout=DROPOUT_RATE * 0.4)(x)
+
     x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dropout(0.35)(x)
+    x = layers.Dropout(DROPOUT_RATE)(x)
     outputs = layers.Dense(len(CLASSES), activation='softmax')(x)
     return tf.keras.Model(inputs, outputs)
 
@@ -455,6 +477,8 @@ if __name__ == '__main__':
         "seed": SEED,
         "class_count": CLASS_COUNT,
         "max_samples_per_class": MAX_SAMPLES_PER_CLASS,
+        "width_mult": WIDTH_MULT,
+        "dropout_rate": DROPOUT_RATE,
         "checkpoint_choice": checkpoint_choice,
         "prey_threshold": chosen_thr,
     }
