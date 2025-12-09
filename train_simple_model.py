@@ -515,6 +515,17 @@ if __name__ == '__main__':
     # -----------------------------
     # Aggregate metrics into JSON for Flask
     # -----------------------------
+    def _to_native(obj):
+        if isinstance(obj, np.generic):
+            return obj.item()
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, dict):
+            return {k: _to_native(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_to_native(v) for v in obj]
+        return obj
+
     metrics = {
         "classes": CLASSES,
         "label_indices": label_indices,
@@ -531,7 +542,7 @@ if __name__ == '__main__':
     }
 
     with open(metrics_json_path, 'w') as f:
-        json.dump(metrics, f, indent=2)
+        json.dump(_to_native(metrics), f, indent=2)
     print(f"Metrics JSON saved to {metrics_json_path}")
 
     # -----------------------------
@@ -601,7 +612,7 @@ if __name__ == '__main__':
     # Update metrics with TFLite details
     metrics["tflite_details"] = tflite_details
     with open(metrics_json_path, 'w') as f:
-        json.dump(metrics, f, indent=2)
+        json.dump(_to_native(metrics), f, indent=2)
     print(f"Updated metrics JSON with TFLite details")
 
     # Write a .cc file for ESP32
