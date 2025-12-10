@@ -653,12 +653,14 @@ retraining = False
 def upload_model_to_esp32(version_name=None):
     """Upload the simple TFLite model to ESP32 via HTTP.
 
+    Returns (success: bool, message: str) for clearer propagation to callers/UI.
     If version_name is provided, upload that local version; otherwise use the current active local model.
     """
     try:
         if OFFLINE_MODE:
             logging.info("Offline mode - skipping ESP32 model upload.")
-            return False
+            return False, "offline mode"
+
         # Prefer the provided version; otherwise use the active local version; otherwise legacy simple_model
         if version_name:
             model_path = os.path.join(LOCAL_MODELS_DIR, version_name, 'model', 'my_simple_model_quant.tflite')
@@ -670,8 +672,9 @@ def upload_model_to_esp32(version_name=None):
             else:
                 model_path = os.path.join('simple_model', 'my_simple_model_quant.tflite')
         if not os.path.exists(model_path):
-            logging.error(f"Simple model file not found at {model_path}")
-            return False
+            msg = f"Simple model file not found at {model_path}"
+            logging.error(msg)
+            return False, msg
         
         # ESP32 IP address - should be configurable
         esp32_ip = credentials.ESP32_IP if hasattr(credentials, 'ESP32_IP') else '192.168.1.14'
@@ -688,20 +691,21 @@ def upload_model_to_esp32(version_name=None):
         response = requests.post(upload_url, files=files, timeout=30)
         
         if response.status_code == 200:
-            logging.info("Model uploaded successfully to ESP32")
+            msg = "Model uploaded successfully to ESP32"
+            logging.info(msg)
             retraining_status['output'] += "\nModel uploaded to ESP32 successfully!\n"
-            return True
+            return True, msg
         else:
             error_msg = f"Failed to upload model to ESP32: {response.status_code} - {response.text}"
             logging.error(error_msg)
             retraining_status['output'] += f"\n{error_msg}\n"
-            return False
+            return False, error_msg
             
     except Exception as e:
         error_msg = f"Error uploading model to ESP32: {e}"
         logging.error(error_msg)
         retraining_status['output'] += f"\n{error_msg}\n"
-        return False
+        return False, error_msg
 
 def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
     global retraining_status
@@ -1326,10 +1330,10 @@ def activate_version(scope, version_name):
         
         # For local scope, upload to ESP32 before marking active
         if scope == 'local':
-            success = upload_model_to_esp32(version_name)
+            success, msg = upload_model_to_esp32(version_name)
             if not success:
-                logging.error(f"Failed to upload local model {version_name} to ESP32; not activating.")
-                return jsonify({'error': 'Upload to ESP32 failed; model not activated'}), 500
+                logging.error(f"Failed to upload local model {version_name} to ESP32; not activating. Reason: {msg}")
+                return jsonify({'error': f'Upload to ESP32 failed; model not activated. Reason: {msg}'}), 500
         
         # Copy reports back to active location
         reports_src = os.path.join(version_dir, 'reports')
