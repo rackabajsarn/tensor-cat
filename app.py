@@ -627,16 +627,16 @@ def upsert_inference_record(hash_hex, *, timestamp_server=None, timestamp_esp=No
                     esp32_confidence, server_confidence
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(hash) DO UPDATE SET
-                    timestamp_server=excluded.timestamp_server,
-                    timestamp_esp=excluded.timestamp_esp,
-                    esp32_model=excluded.esp32_model,
-                    server_model=excluded.server_model,
-                    esp32_inference=excluded.esp32_inference,
-                    server_inference=excluded.server_inference,
-                    server_simple_inference=excluded.server_simple_inference,
-                    true_label=excluded.true_label,
-                    esp32_confidence=excluded.esp32_confidence,
-                    server_confidence=excluded.server_confidence;
+                    timestamp_server=COALESCE(excluded.timestamp_server, inference_log.timestamp_server),
+                    timestamp_esp=COALESCE(excluded.timestamp_esp, inference_log.timestamp_esp),
+                    esp32_model=COALESCE(excluded.esp32_model, inference_log.esp32_model),
+                    server_model=COALESCE(excluded.server_model, inference_log.server_model),
+                    esp32_inference=COALESCE(excluded.esp32_inference, inference_log.esp32_inference),
+                    server_inference=COALESCE(excluded.server_inference, inference_log.server_inference),
+                    server_simple_inference=COALESCE(excluded.server_simple_inference, inference_log.server_simple_inference),
+                    true_label=COALESCE(excluded.true_label, inference_log.true_label),
+                    esp32_confidence=COALESCE(excluded.esp32_confidence, inference_log.esp32_confidence),
+                    server_confidence=COALESCE(excluded.server_confidence, inference_log.server_confidence);
                 """,
                  [hash_hex, timestamp_server, timestamp_esp, esp32_model, server_model,
                  esp32_inference, server_inference, server_simple_inference, true_label,
