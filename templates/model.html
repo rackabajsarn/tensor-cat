@@ -14,14 +14,19 @@
 
     <section id="server-panel" class="model-panel active" aria-label="Server model configuration">
         <div class="panel-header">
-            <div>
+            <div class="panel-header-left">
                 <h2>Server Model</h2>
                 <p>Transfer learning for the Coral TPU pipeline.</p>
             </div>
-            <div class="panel-meta">
-                <span><strong>Last trained:</strong> {{ server_info.last_trained }}</span>
-                <span><strong>Images used:</strong> {{ server_info.images_used }}</span>
-                <span><strong>Dataset size:</strong> {{ current_dataset_images }}</span>
+            <div class="panel-header-actions">
+                <div class="panel-meta">
+                    <span><strong>Last trained:</strong> {{ server_info.last_trained }}</span>
+                    <span><strong>Images used:</strong> {{ server_info.images_used }}</span>
+                    <span><strong>Dataset size:</strong> {{ current_dataset_images }}</span>
+                </div>
+                <button class="panel-help-btn" type="button" aria-label="Open server parameters help" data-help-target="server-help-modal">
+                    <i class="fas fa-question"></i>
+                </button>
             </div>
         </div>
 
@@ -87,8 +92,18 @@
                             <th>Value</th>
                         </tr>
                         <tr>
-                            <td>Accuracy</td>
+                            <td>Training accuracy</td>
                             <td>{{ '%.2f' % active_server_metrics.report.accuracy }}</td>
+                        </tr>
+                        <tr>
+                            <td>Accumulated accuracy</td>
+                            <td>
+                                {% if active_server_empirical %}
+                                    {{ '%.1f' % (active_server_empirical.accuracy * 100) }}% ({{ active_server_empirical.correct }}/{{ active_server_empirical.total }})
+                                {% else %}
+                                    —
+                                {% endif %}
+                            </td>
                         </tr>
                     </table>
                     {% else %}
@@ -106,17 +121,35 @@
                 {% for version in server_versions %}
                 <div class="version-item {% if active_models.server == version.name %}active{% endif %}" data-version="{{ version.name }}">
                     <div class="version-row">
-                        <div class="version-info">
-                            <span class="version-name">{{ version.name }}</span>
-                            {% if active_models.server == version.name %}
-                            <span class="version-badge">Active</span>
-                            {% endif %}
+                        <div class="version-top">
+                            <div class="version-name-block">
+                                <span class="version-name">{{ version.name }}</span>
+                                {% if active_models.server == version.name %}
+                                <span class="version-badge">Active</span>
+                                {% endif %}
+                            </div>
                         </div>
-                        <div class="version-metrics">
+
+                        {% set has_metrics = version.metrics.accuracy or version.empirical %}
+                        {% if has_metrics %}
+                        <div class="version-metrics-grid">
                             {% if version.metrics.accuracy %}
-                            <span class="metric">Accuracy: {{ '%.1f' % (version.metrics.accuracy * 100) }}%</span>
+                            <div class="metric-card">
+                                <span class="metric-label">Training acc</span>
+                                <span class="metric-value">{{ '%.1f' % (version.metrics.accuracy * 100) }}%</span>
+                            </div>
+                            {% endif %}
+                            {% if version.empirical %}
+                            <div class="metric-card">
+                                <span class="metric-label">Accumulated acc</span>
+                                <span class="metric-value">{{ '%.1f' % (version.empirical.accuracy * 100) }}%</span>
+                            </div>
                             {% endif %}
                         </div>
+                        {% else %}
+                        <p class="metric-empty">No metrics yet for this version.</p>
+                        {% endif %}
+
                         <div class="version-actions">
                             <a href="{{ url_for('view_model_report', scope='server', version_name=version.name) }}" class="view-btn">
                                 <i class="fas fa-chart-bar"></i> View Report
@@ -142,14 +175,19 @@
 
     <section id="local-panel" class="model-panel" aria-label="Local model configuration">
         <div class="panel-header">
-            <div>
+            <div class="panel-header-left">
                 <h2>Local Model</h2>
                 <p>CPU-friendly CNN for ESP32 upload.</p>
             </div>
-            <div class="panel-meta">
-                <span><strong>Last trained:</strong> {{ local_info.last_trained }}</span>
-                <span><strong>Images used:</strong> {{ local_info.images_used }}</span>
-                <span><strong>Dataset size:</strong> {{ current_dataset_images }}</span>
+            <div class="panel-header-actions">
+                <div class="panel-meta">
+                    <span><strong>Last trained:</strong> {{ local_info.last_trained }}</span>
+                    <span><strong>Images used:</strong> {{ local_info.images_used }}</span>
+                    <span><strong>Dataset size:</strong> {{ current_dataset_images }}</span>
+                </div>
+                <button class="panel-help-btn" type="button" aria-label="Open local parameters help" data-help-target="local-help-modal">
+                    <i class="fas fa-question"></i>
+                </button>
             </div>
         </div>
 
@@ -164,6 +202,14 @@
                 <select id="local_learning_rate" name="local_learning_rate">
                     {% for lr in learning_rates_local %}
                         <option value="{{ lr }}" {% if lr == local_params.learning_rate %}selected{% endif %}>{{ lr }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="local_val_split">Validation Split</label>
+                <select id="local_val_split" name="local_val_split">
+                    {% for v in val_split_options %}
+                        <option value="{{ v }}" {% if v == local_params.val_split %}selected{% endif %}>{{ '%.2f' % v }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -201,6 +247,54 @@
             <div class="form-field">
                 <label for="local_seed">Seed</label>
                 <input type="number" id="local_seed" name="local_seed" value="{{ local_params.seed }}" min="0" max="999999" step="1">
+            </div>
+            <div class="form-field">
+                <label for="local_early_stop_patience">Early Stop Patience</label>
+                <input type="number" id="local_early_stop_patience" name="local_early_stop_patience" value="{{ local_params.early_stop_patience }}" min="1" max="20" step="1">
+            </div>
+            <div class="form-field">
+                <label for="local_weight_decay">Weight Decay</label>
+                <select id="local_weight_decay" name="local_weight_decay">
+                    {% for wd in weight_decay_options %}
+                        <option value="{{ wd }}" {% if wd == local_params.weight_decay %}selected{% endif %}>{{ wd }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="local_dropout">Dropout</label>
+                <input type="range" id="local_dropout" name="local_dropout" value="{{ local_params.dropout }}" min="0" max="0.6" step="0.05">
+                <span class="range-value" data-for="local_dropout">{{ local_params.dropout }}</span>
+            </div>
+            <div class="form-field">
+                <label for="local_augment">Augmentation</label>
+                <select id="local_augment" name="local_augment">
+                    {% for opt in augment_options %}
+                        <option value="{{ opt }}" {% if opt == local_params.augment %}selected{% endif %}>{{ opt|capitalize }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="local_use_class_weights">Class Weights</label>
+                <select id="local_use_class_weights" name="local_use_class_weights">
+                    <option value="on" {% if local_params.use_class_weights %}selected{% endif %}>On</option>
+                    <option value="off" {% if not local_params.use_class_weights %}selected{% endif %}>Off</option>
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="local_label_smoothing">Label Smoothing</label>
+                <input type="number" id="local_label_smoothing" name="local_label_smoothing" value="{{ local_params.label_smoothing }}" min="0" max="0.2" step="0.01">
+            </div>
+            <div class="form-field">
+                <label for="local_lr_schedule">LR Schedule</label>
+                <select id="local_lr_schedule" name="local_lr_schedule">
+                    {% for opt in lr_schedule_options %}
+                        <option value="{{ opt }}" {% if opt == local_params.lr_schedule %}selected{% endif %}>{{ opt|capitalize }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="local_warmup_epochs">Warmup Epochs</label>
+                <input type="number" id="local_warmup_epochs" name="local_warmup_epochs" value="{{ local_params.warmup_epochs }}" min="0" max="20" step="1">
             </div>
             <button type="submit">Retrain Local Model</button>
         </form>
@@ -240,8 +334,18 @@
                             <th>Value</th>
                         </tr>
                         <tr>
-                            <td>Accuracy</td>
+                            <td>Training accuracy</td>
                             <td>{{ '%.2f' % active_local_metrics.report.accuracy }}</td>
+                        </tr>
+                        <tr>
+                            <td>Accumulated accuracy</td>
+                            <td>
+                                {% if active_local_empirical %}
+                                    {{ '%.1f' % (active_local_empirical.accuracy * 100) }}% ({{ active_local_empirical.correct }}/{{ active_local_empirical.total }})
+                                {% else %}
+                                    —
+                                {% endif %}
+                            </td>
                         </tr>
                     </table>
                     {% else %}
@@ -259,17 +363,35 @@
                 {% for version in local_versions %}
                 <div class="version-item {% if active_models.local == version.name %}active{% endif %}" data-version="{{ version.name }}">
                     <div class="version-row">
-                        <div class="version-info">
-                            <span class="version-name">{{ version.name }}</span>
-                            {% if active_models.local == version.name %}
-                            <span class="version-badge">Active</span>
-                            {% endif %}
+                        <div class="version-top">
+                            <div class="version-name-block">
+                                <span class="version-name">{{ version.name }}</span>
+                                {% if active_models.local == version.name %}
+                                <span class="version-badge">Active</span>
+                                {% endif %}
+                            </div>
                         </div>
-                        <div class="version-metrics">
+
+                        {% set has_metrics = version.metrics.accuracy or version.empirical %}
+                        {% if has_metrics %}
+                        <div class="version-metrics-grid">
                             {% if version.metrics.accuracy %}
-                            <span class="metric">Accuracy: {{ '%.1f' % (version.metrics.accuracy * 100) }}%</span>
+                            <div class="metric-card">
+                                <span class="metric-label">Training acc</span>
+                                <span class="metric-value">{{ '%.1f' % (version.metrics.accuracy * 100) }}%</span>
+                            </div>
+                            {% endif %}
+                            {% if version.empirical %}
+                            <div class="metric-card">
+                                <span class="metric-label">Accumulated acc</span>
+                                <span class="metric-value">{{ '%.1f' % (version.empirical.accuracy * 100) }}%</span>
+                            </div>
                             {% endif %}
                         </div>
+                        {% else %}
+                        <p class="metric-empty">No metrics yet for this version.</p>
+                        {% endif %}
+
                         <div class="version-actions">
                             <a href="{{ url_for('view_model_report', scope='local', version_name=version.name) }}" class="view-btn">
                                 <i class="fas fa-chart-bar"></i> View Report
@@ -292,6 +414,44 @@
             {% endif %}
         </div>
     </section>
+</div>
+
+<!-- Help modals -->
+<div id="server-help-modal" class="help-modal" aria-hidden="true">
+    <div class="help-modal-content" role="dialog" aria-modal="true" aria-labelledby="server-help-title">
+        <button class="help-close" type="button" aria-label="Close" data-help-close>&times;</button>
+        <h3 id="server-help-title">Server Parameters</h3>
+        <ul class="help-list">
+            <li><strong>Epochs</strong> — initial training passes before fine-tuning.</li>
+            <li><strong>Fine-tune Epochs</strong> — additional passes after unfreezing deeper layers.</li>
+            <li><strong>Learning Rate</strong> — step size for optimizer; smaller is safer, larger learns faster but risks divergence.</li>
+            <li><strong>Unfreeze From Layer</strong> — where to start training deeper layers; higher numbers keep more of the base model frozen.</li>
+        </ul>
+    </div>
+</div>
+
+<div id="local-help-modal" class="help-modal" aria-hidden="true">
+    <div class="help-modal-content" role="dialog" aria-modal="true" aria-labelledby="local-help-title">
+        <button class="help-close" type="button" aria-label="Close" data-help-close>&times;</button>
+        <h3 id="local-help-title">Local Parameters</h3>
+        <ul class="help-list">
+            <li><strong>Epochs</strong> — total training passes.</li>
+            <li><strong>Validation Split</strong> — fraction of data held out for validation.</li>
+            <li><strong>Learning Rate</strong> — optimizer step size.</li>
+            <li><strong>Batch Size</strong> — images per training step.</li>
+            <li><strong>Classes</strong> — choose 2-class (prey / not_prey) or 3-class (adds not_cat).</li>
+            <li><strong>Max Samples Per Class</strong> — optional cap per class (0 uses all).</li>
+            <li><strong>Seed</strong> — controls shuffling/reproducibility.</li>
+            <li><strong>Early Stop Patience</strong> — epochs to wait on validation loss before stopping.</li>
+            <li><strong>Weight Decay</strong> — L2 regularization for better generalization.</li>
+            <li><strong>Dropout</strong> — fraction of activations dropped before the classifier head.</li>
+            <li><strong>Augmentation</strong> — light/medium perturbations applied to training images.</li>
+            <li><strong>Class Weights</strong> — rebalance training toward underrepresented classes.</li>
+            <li><strong>Label Smoothing</strong> — softens targets to reduce overconfidence.</li>
+            <li><strong>LR Schedule</strong> — constant, cosine decay, or step schedule.</li>
+            <li><strong>Warmup Epochs</strong> — gentle ramp-up for the learning rate at start.</li>
+        </ul>
+    </div>
 </div>
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -423,6 +583,48 @@
 
         pollStatuses();
         setInterval(pollStatuses, 5000);
+
+        // Help modals
+        const openHelp = (id) => {
+            const modal = document.getElementById(id);
+            if (modal) {
+                modal.classList.add('open');
+                modal.setAttribute('aria-hidden', 'false');
+            }
+        };
+
+        const closeHelp = (modal) => {
+            modal.classList.remove('open');
+            modal.setAttribute('aria-hidden', 'true');
+        };
+
+        document.querySelectorAll('.panel-help-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const target = btn.getAttribute('data-help-target');
+                if (target) openHelp(target);
+            });
+        });
+
+        document.querySelectorAll('.help-close').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const modal = btn.closest('.help-modal');
+                if (modal) closeHelp(modal);
+            });
+        });
+
+        document.querySelectorAll('.help-modal').forEach(modal => {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    closeHelp(modal);
+                }
+            });
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.help-modal.open').forEach(modal => closeHelp(modal));
+            }
+        });
     });
 </script>
 {% endblock %}

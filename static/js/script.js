@@ -3,6 +3,7 @@
 // Track current image index for navigation
 let currentImageIndex = 0;
 let imageList = [];
+let currentInferenceInfo = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     // Build the image list from visible thumbnails
@@ -232,6 +233,8 @@ function openModal(filename, mode) {
     modalImg.setAttribute('data-filename', filename);
     modalImg.setAttribute('data-mode', mode);
 
+    currentInferenceInfo = null;
+
     // Update current index for navigation
     buildImageList();
     currentImageIndex = imageList.findIndex(img => img.filename === filename);
@@ -252,6 +255,8 @@ function openModal(filename, mode) {
             document.getElementById('btn-morris').classList.toggle('active', labels['morris']);
             document.getElementById('btn-entering').classList.toggle('active', labels['entering']);
             document.getElementById('btn-prey').classList.toggle('active', labels['prey']);
+            currentInferenceInfo = data.inference || null;
+            updateNavCounterDisplay();
         }
     })
     .catch(error => {
@@ -297,11 +302,41 @@ function navigateToNext() {
 function updateNavButtons() {
     const prevBtn = document.getElementById('nav-prev');
     const nextBtn = document.getElementById('nav-next');
-    const counter = document.getElementById('nav-counter');
     
     if (prevBtn) prevBtn.style.display = imageList.length > 1 ? 'flex' : 'none';
     if (nextBtn) nextBtn.style.display = imageList.length > 1 ? 'flex' : 'none';
-    if (counter) counter.textContent = `${currentImageIndex + 1} / ${imageList.length}`;
+    updateNavCounterDisplay();
+}
+
+function formatConfidence(conf) {
+    if (conf === null || conf === undefined) {
+        return '';
+    }
+    const num = Number(conf);
+    if (Number.isFinite(num)) {
+        return ` (${(num * 100).toFixed(0)}%)`;
+    }
+    return '';
+}
+
+function updateNavCounterDisplay() {
+    const counter = document.getElementById('nav-counter');
+    if (!counter) return;
+    const total = imageList.length;
+    const indexText = total > 0 ? `${currentImageIndex + 1} / ${total}` : '--';
+
+    const espLabel = currentInferenceInfo && currentInferenceInfo.esp32_inference
+        ? `${currentInferenceInfo.esp32_inference}${formatConfidence(currentInferenceInfo.esp32_confidence)}`
+        : ': --';
+    const serverLabel = currentInferenceInfo && currentInferenceInfo.server_inference
+        ? `${currentInferenceInfo.server_inference}${formatConfidence(currentInferenceInfo.server_confidence)}`
+        : ': --';
+
+    counter.innerHTML = `
+        <span class="nav-pill"><span class="pill-icon">🛰️</span> ${espLabel}</span>
+        <span class="nav-index">${indexText}</span>
+        <span class="nav-pill"><span class="pill-icon">🖥️</span> ${serverLabel}</span>
+    `;
 }
 
 // Close Modal Function

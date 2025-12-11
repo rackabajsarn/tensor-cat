@@ -40,6 +40,14 @@ parser.add_argument('--width_mult', type=float, default=0.75,
                     help='Width multiplier to shrink/expand channel counts for a lighter/heavier model.')
 parser.add_argument('--dropout', type=float, default=0.30,
                     help='Dropout rate applied before the classifier head.')
+parser.add_argument('--val_split', type=float, default=0.20, help='Fraction for validation split (0-0.5).')
+parser.add_argument('--early_stop_patience', type=int, default=5, help='Early stopping patience (epochs).')
+parser.add_argument('--weight_decay', type=float, default=1e-5, help='AdamW weight decay.')
+parser.add_argument('--augment', choices=['off', 'light', 'medium'], default='light', help='Data augmentation level.')
+parser.add_argument('--use_class_weights', choices=['on', 'off'], default='on', help='Toggle class weighting.')
+parser.add_argument('--label_smoothing', type=float, default=0.0, help='Label smoothing factor (0-0.2).')
+parser.add_argument('--lr_schedule', choices=['constant', 'cosine', 'step'], default='cosine', help='LR schedule type.')
+parser.add_argument('--warmup_epochs', type=int, default=0, help='Warmup epochs for LR schedule.')
 args = parser.parse_args()
 
 EPOCHS = args.epochs
@@ -52,6 +60,14 @@ MAX_SAMPLES_PER_CLASS = max(0, args.max_samples_per_class)
 RUN_ID = args.run_id
 WIDTH_MULT = max(0.4, float(args.width_mult))  # clamp to avoid degenerate shapes
 DROPOUT_RATE = min(max(0.0, float(args.dropout)), 0.8)
+VAL_SPLIT = min(max(args.val_split, 0.05), 0.4)
+EARLY_STOP_PATIENCE = max(1, min(int(args.early_stop_patience), 20))
+WEIGHT_DECAY = max(0.0, float(args.weight_decay))
+AUGMENT = args.augment
+USE_CLASS_WEIGHTS = (args.use_class_weights == 'on')
+LABEL_SMOOTHING = min(max(args.label_smoothing, 0.0), 0.2)
+LR_SCHEDULE = args.lr_schedule
+WARMUP_EPOCHS = max(0, min(int(args.warmup_epochs), 20))
 random.seed(SEED)
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
@@ -170,9 +186,11 @@ def adjust_gamma(img):
 
 def preprocess_image_train(image_path, label):
     image, label = preprocess_image(image_path, label)
-    # Gentle photometric jitter only (no gamma/jpeg/pad/crop)
-    #image = tf.image.random_brightness(image, 0.03)
-    #image = tf.image.random_contrast(image, 0.95, 1.05)
+    if AUGMENT != 'off':
+        image = tf.image.random_brightness(image, 0.04)
+        image = tf.image.random_contrast(image, 0.95, 1.05)
+        if AUGMENT == 'medium':
+            image = adjust_gamma(image)
     return image, label
 
 def preprocess_image_val(image_path, label):
@@ -272,20 +290,20 @@ if __name__ == '__main__':
 
     # Split (stratified)
     train_paths, val_paths, train_labels, val_labels = train_test_split(
-        image_paths, labels_encoded, test_size=0.2, random_state=SEED, stratify=labels_encoded)
+        image_paths, labels_encoded, test_size=VAL_SPLIT, random_state=SEED, stratify=labels_encoded)
 
     # Class weights
-    unique_labels = np.unique(train_labels)
-    class_weights_arr = class_weight.compute_class_weight(
-        class_weight='balanced',
-        classes=unique_labels,
-        y=train_labels
-    )
-    class_weight_dict = {int(label): weight for label, weight in zip(unique_labels, class_weights_arr)}
-    for idx in range(len(CLASSES)):
-        class_weight_dict.setdefault(idx, 1.0)
-    # Emphasize 'prey' a bit more
-    # class_weight_dict[CLASSES.index('prey')] *= 2.0
+    class_weight_dict = None
+    if USE_CLASS_WEIGHTS:
+        unique_labels = np.unique(train_labels)
+        class_weights_arr = class_weight.compute_class_weight(
+            class_weight='balanced',
+            classes=unique_labels,
+            y=train_labels
+        )
+        class_weight_dict = {int(label): weight for label, weight in zip(unique_labels, class_weights_arr)}
+        for idx in range(len(CLASSES)):
+            class_weight_dict.setdefault(idx, 1.0)
 
     # Datasets
     AUTOTUNE = tf.data.AUTOTUNE
@@ -331,20 +349,42 @@ if __name__ == '__main__':
     # Model & optimizer
     model = build_model()
 
-    # AdamW + cosine decay
     steps_per_epoch = max(1, len(train_paths)//BATCH_SIZE)
-    total_steps = steps_per_epoch * EPOCHS
-    lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
-        initial_learning_rate=INIT_LR, decay_steps=total_steps, alpha=1e-2
-    )
-    optimizer = tf.keras.optimizers.AdamW(learning_rate=lr_schedule, weight_decay=1e-5)
+    total_steps = max(1, steps_per_epoch * EPOCHS)
+    warmup_steps = max(0, min(WARMUP_EPOCHS, EPOCHS) * steps_per_epoch)
+
+    def make_lr_schedule():
+        if LR_SCHEDULE == 'cosine':
+            base = tf.keras.optimizers.schedules.CosineDecay(
+                initial_learning_rate=INIT_LR, decay_steps=total_steps, alpha=1e-2
+            )
+        elif LR_SCHEDULE == 'step':
+            boundaries = [int(total_steps * 0.5), int(total_steps * 0.75)]
+            values = [INIT_LR, INIT_LR * 0.5, INIT_LR * 0.1]
+            base = tf.keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
+        else:
+            base = lambda step: tf.constant(INIT_LR, dtype=tf.float32)
+
+        if warmup_steps <= 0:
+            return base
+
+        def schedule(step):
+            step = tf.cast(step, tf.float32)
+            base_val = base(step)
+            warm = tf.constant(INIT_LR, dtype=tf.float32) * tf.minimum(1.0, step / float(warmup_steps))
+            return tf.cond(step < warmup_steps, lambda: warm, lambda: base_val)
+
+        return schedule
+
+    lr_schedule = make_lr_schedule()
+    optimizer = tf.keras.optimizers.AdamW(learning_rate=lr_schedule, weight_decay=WEIGHT_DECAY)
 
     # Metrics focused on 'prey' class
     prey_index = CLASSES.index('prey')
     precision_prey = tf.keras.metrics.Precision(class_id=prey_index, name='precision_prey')
     recall_prey = tf.keras.metrics.Recall(class_id=prey_index, name='recall_prey')
 
-    loss = tf.keras.losses.SparseCategoricalCrossentropy()
+    loss = tf.keras.losses.SparseCategoricalCrossentropy(label_smoothing=LABEL_SMOOTHING)
     model.compile(
         optimizer=optimizer,
         loss=loss,
@@ -362,13 +402,9 @@ if __name__ == '__main__':
         monitor='val_recall_prey', mode='max', save_best_only=True
     )
     early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor='val_loss', patience=5, mode='min', restore_best_weights=True
+        monitor='val_loss', patience=EARLY_STOP_PATIENCE, mode='min', restore_best_weights=True
     )
     progress_callback = ProgressCallback(total_epochs=EPOCHS)
-
-    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
-        monitor='val_loss', factor=0.5, patience=2, min_lr=3e-5, verbose=1
-    )
 
     # Train
     history = model.fit(
@@ -478,6 +514,14 @@ if __name__ == '__main__':
         "max_samples_per_class": MAX_SAMPLES_PER_CLASS,
         "width_mult": WIDTH_MULT,
         "dropout_rate": DROPOUT_RATE,
+        "val_split": VAL_SPLIT,
+        "early_stop_patience": EARLY_STOP_PATIENCE,
+        "weight_decay": WEIGHT_DECAY,
+        "augment": AUGMENT,
+        "use_class_weights": USE_CLASS_WEIGHTS,
+        "label_smoothing": LABEL_SMOOTHING,
+        "lr_schedule": LR_SCHEDULE,
+        "warmup_epochs": WARMUP_EPOCHS,
         "checkpoint_choice": checkpoint_choice,
         "prey_threshold": chosen_thr,
     }

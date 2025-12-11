@@ -85,7 +85,16 @@ LOCAL_PARAM_DEFAULTS = {
     "batch_size": 32,
     "seed": 0,
     "class_count": 2,
-    "max_samples_per_class": 0
+    "max_samples_per_class": 0,
+    "val_split": 0.2,
+    "early_stop_patience": 5,
+    "weight_decay": 1e-5,
+    "dropout": 0.30,
+    "augment": "light",
+    "use_class_weights": True,
+    "label_smoothing": 0.0,
+    "lr_schedule": "cosine",
+    "warmup_epochs": 0
 }
 
 # Valid parameter ranges for local model training
@@ -95,7 +104,16 @@ LOCAL_PARAM_LIMITS = {
     "batch_size": [16, 32, 48, 64],
     "seed": {"min": 0, "max": 999999},
     "class_count": [2, 3],
-    "max_samples_per_class": {"min": 0, "max": 1000}
+    "max_samples_per_class": {"min": 0, "max": 1000},
+    "val_split": {"min": 0.05, "max": 0.4, "step": 0.05},
+    "early_stop_patience": {"min": 1, "max": 20},
+    "weight_decay": [0.0, 1e-6, 3e-6, 1e-5, 3e-5, 1e-4],
+    "dropout": {"min": 0.0, "max": 0.6, "step": 0.05},
+    "augment": ["off", "light", "medium"],
+    "use_class_weights": [True, False],
+    "label_smoothing": {"min": 0.0, "max": 0.2, "step": 0.01},
+    "lr_schedule": ["constant", "cosine", "step"],
+    "warmup_epochs": {"min": 0, "max": 20}
 }
 
 
@@ -170,6 +188,112 @@ def compute_simple_class(class_count, *, predicted_label=None, labels=None):
         return "not_prey"
 
     return None
+
+
+def _ordered_classes(labels_set):
+    """Return stable class ordering for confusion matrices (supports 2 or 3 classes)."""
+    preferred = ["prey", "not_cat", "not_prey"]
+    ordered = [lbl for lbl in preferred if lbl in labels_set]
+    for lbl in sorted(labels_set):
+        if lbl not in ordered:
+            ordered.append(lbl)
+    return ordered
+
+
+def compute_empirical_metrics(model_name=None, scope='server'):
+    """Compute accumulated accuracy/confusion from inference_log.
+
+    scope controls which model column to filter on: 'server' uses server_model with
+    server_simple_inference; 'local' uses esp32_model with esp32_inference. Only rows
+    that have both a true_label and the corresponding prediction are counted. Handles
+    both 2-class and 3-class layouts by deriving the label set from the data.
+    """
+    model_column = 'server_model' if scope == 'server' else 'esp32_model'
+    pred_column = 'server_simple_inference' if scope == 'server' else 'esp32_inference'
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            params = []
+            where = f"true_label IS NOT NULL AND {pred_column} IS NOT NULL"
+            if model_name:
+                where += f" AND {model_column} = ?"
+                params.append(model_name)
+            cursor.execute(
+                f"SELECT true_label, {pred_column} FROM inference_log WHERE {where}",
+                params
+            )
+            rows = cursor.fetchall()
+    except Exception as e:
+        logging.error(f"Failed to compute empirical metrics for {model_name}: {e}")
+        return None
+
+    if not rows:
+        return None
+
+    labels_set = set()
+    for true_lbl, pred_lbl in rows:
+        if true_lbl:
+            labels_set.add(true_lbl)
+        if pred_lbl:
+            labels_set.add(pred_lbl)
+
+    classes = _ordered_classes(labels_set)
+    idx = {lbl: i for i, lbl in enumerate(classes)}
+    size = len(classes)
+    matrix = [[0 for _ in range(size)] for _ in range(size)]
+    total = 0
+    correct = 0
+
+    for true_lbl, pred_lbl in rows:
+        if true_lbl is None or pred_lbl is None:
+            continue
+        i = idx.get(true_lbl)
+        j = idx.get(pred_lbl)
+        if i is None or j is None:
+            continue
+        matrix[i][j] += 1
+        total += 1
+        if true_lbl == pred_lbl:
+            correct += 1
+
+    if total == 0:
+        return None
+
+    accuracy = correct / total if total else None
+    return {
+        'accuracy': accuracy,
+        'total': total,
+        'correct': correct,
+        'classes': classes,
+        'confusion_matrix': matrix,
+    }
+
+
+def get_inference_by_hash(hash_hex):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                """
+                SELECT esp32_inference, esp32_confidence, server_simple_inference, server_confidence
+                FROM inference_log
+                WHERE hash = ?
+                """,
+                [hash_hex]
+            ).fetchone()
+    except Exception as e:
+        logging.error(f"Failed to fetch inference row for {hash_hex}: {e}")
+        return None
+
+    if not row:
+        return None
+
+    esp_inf, esp_conf, server_inf, server_conf = row
+    return {
+        'esp32_inference': esp_inf,
+        'esp32_confidence': esp_conf,
+        'server_inference': server_inf,
+        'server_confidence': server_conf,
+    }
 
 
 def set_active_model(scope, version_name):
@@ -1100,7 +1224,23 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
         retraining_status['retraining'] = False
 
 
-def run_local_retraining(epochs, learning_rate, batch_size, seed, class_count, max_samples_per_class):
+def run_local_retraining(
+    epochs,
+    learning_rate,
+    batch_size,
+    seed,
+    class_count,
+    max_samples_per_class,
+    val_split,
+    early_stop_patience,
+    weight_decay,
+    dropout,
+    augment,
+    use_class_weights,
+    label_smoothing,
+    lr_schedule,
+    warmup_epochs
+):
     global local_retraining_status
     with local_retrain_lock:
         logging.info("Starting local retrain")
@@ -1128,7 +1268,16 @@ def run_local_retraining(epochs, learning_rate, batch_size, seed, class_count, m
             '--batch_size', str(batch_size),
             '--seed', str(seed),
             '--class_count', str(class_count),
-            '--run_id', run_id
+            '--run_id', run_id,
+            '--val_split', str(val_split),
+            '--early_stop_patience', str(early_stop_patience),
+            '--weight_decay', str(weight_decay),
+            '--dropout', str(dropout),
+            '--augment', str(augment),
+            '--use_class_weights', 'on' if use_class_weights else 'off',
+            '--label_smoothing', str(label_smoothing),
+            '--lr_schedule', str(lr_schedule),
+            '--warmup_epochs', str(warmup_epochs)
         ]
 
         if max_samples_per_class > 0:
@@ -1194,7 +1343,16 @@ def run_local_retraining(epochs, learning_rate, batch_size, seed, class_count, m
             batch_size=batch_size,
             seed=seed,
             class_count=class_count,
-            max_samples_per_class=max_samples_per_class
+            max_samples_per_class=max_samples_per_class,
+            val_split=val_split,
+            early_stop_patience=early_stop_patience,
+            weight_decay=weight_decay,
+            dropout=dropout,
+            augment=augment,
+            use_class_weights=use_class_weights,
+            label_smoothing=label_smoothing,
+            lr_schedule=lr_schedule,
+            warmup_epochs=warmup_epochs
         )
         logging.info("Local model retrained successfully.")
 
@@ -1281,7 +1439,10 @@ def get_model_info():
 
 def update_model_info(section='server', last_trained=None, images_used=None, retraining=None,
                       epochs=None, fine_tune_epochs=None, learning_rate=None, fine_tune_at=None,
-                      batch_size=None, seed=None, class_count=None, max_samples_per_class=None):
+                      batch_size=None, seed=None, class_count=None, max_samples_per_class=None,
+                      val_split=None, early_stop_patience=None, weight_decay=None, dropout=None,
+                      augment=None, use_class_weights=None, label_smoothing=None, lr_schedule=None,
+                      warmup_epochs=None):
     data = get_model_info()
     section_defaults = SERVER_PARAM_DEFAULTS if section == 'server' else LOCAL_PARAM_DEFAULTS
     section_data = _ensure_section(data, section, section_defaults)
@@ -1315,6 +1476,24 @@ def update_model_info(section='server', last_trained=None, images_used=None, ret
             params['class_count'] = class_count
         if max_samples_per_class is not None:
             params['max_samples_per_class'] = max_samples_per_class
+        if val_split is not None:
+            params['val_split'] = val_split
+        if early_stop_patience is not None:
+            params['early_stop_patience'] = early_stop_patience
+        if weight_decay is not None:
+            params['weight_decay'] = weight_decay
+        if dropout is not None:
+            params['dropout'] = dropout
+        if augment is not None:
+            params['augment'] = augment
+        if use_class_weights is not None:
+            params['use_class_weights'] = bool(use_class_weights)
+        if label_smoothing is not None:
+            params['label_smoothing'] = label_smoothing
+        if lr_schedule is not None:
+            params['lr_schedule'] = lr_schedule
+        if warmup_epochs is not None:
+            params['warmup_epochs'] = warmup_epochs
 
     try:
         with open(MODEL_INFO_PATH, 'w') as f:
@@ -1409,7 +1588,11 @@ def update_label():
 
     elif action == 'get_labels':
         labels = read_labels(image_path)
-        return jsonify({'success': True, 'labels': labels})
+        inference = None
+        img_hash = read_imghash(image_path)
+        if img_hash:
+            inference = get_inference_by_hash(img_hash)
+        return jsonify({'success': True, 'labels': labels, 'inference': inference})
 
     else:
         return jsonify({'success': False, 'message': 'Invalid action.'}), 400
@@ -1489,6 +1672,10 @@ def model():
     batch_size_options = [16, 32, 48, 64]
     class_count_options = LOCAL_PARAM_LIMITS['class_count']
     max_samples_limits = LOCAL_PARAM_LIMITS['max_samples_per_class']
+    val_split_options = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35]
+    weight_decay_options = LOCAL_PARAM_LIMITS['weight_decay']
+    augment_options = LOCAL_PARAM_LIMITS['augment']
+    lr_schedule_options = LOCAL_PARAM_LIMITS['lr_schedule']
 
     active_models = get_active_models()
 
@@ -1499,11 +1686,19 @@ def model():
         if details:
             active_server_metrics = details.get('metrics')
 
+    active_server_empirical = None
+    if active_models.get('server'):
+        active_server_empirical = compute_empirical_metrics(active_models['server'], scope='server')
+
     active_local_metrics = None
     if active_models.get('local'):
         details = get_model_version_details('local', active_models['local'])
         if details:
             active_local_metrics = details.get('metrics')
+
+    active_local_empirical = None
+    if active_models.get('local'):
+        active_local_empirical = compute_empirical_metrics(active_models['local'], scope='local')
 
     return render_template(
         'model.html',
@@ -1522,10 +1717,26 @@ def model():
         local_class_default=LOCAL_PARAM_DEFAULTS['class_count'],
         max_samples_limits=max_samples_limits,
         max_samples_default=LOCAL_PARAM_DEFAULTS['max_samples_per_class'],
+        val_split_options=val_split_options,
+        weight_decay_options=weight_decay_options,
+        augment_options=augment_options,
+        lr_schedule_options=lr_schedule_options,
         active_server_metrics=active_server_metrics,
         active_local_metrics=active_local_metrics,
-        server_versions=list_model_versions('server'),
-        local_versions=list_model_versions('local'),
+        active_server_empirical=active_server_empirical,
+        active_local_empirical=active_local_empirical,
+        server_versions=[
+            {
+                **version,
+                'empirical': compute_empirical_metrics(version['name'], scope='server')
+            } for version in list_model_versions('server')
+        ],
+        local_versions=[
+            {
+                **version,
+                'empirical': compute_empirical_metrics(version['name'], scope='local')
+            } for version in list_model_versions('local')
+        ],
         active_models=active_models
     )
 
@@ -1723,6 +1934,8 @@ def view_model_report(scope, version_name):
     active = get_active_models()
     is_active = active.get(scope) == version_name
     
+    empirical_metrics = compute_empirical_metrics(version_name, scope=scope)
+
     return render_template('report.html',
                            mode='model',
                            scope=scope,
@@ -1733,8 +1946,8 @@ def view_model_report(scope, version_name):
                            has_confusion=has_confusion,
                            has_accuracy=has_accuracy,
                            has_loss=has_loss,
-                           class_weights=class_weights)
-
+                           class_weights=class_weights,
+                           empirical_metrics=empirical_metrics)
 
 @app.route('/models/<scope>/<version_name>/reports/images/<filename>')
 def serve_version_image(scope, version_name, filename):
@@ -1803,6 +2016,16 @@ def retrain_local_model():
         default=LOCAL_PARAM_DEFAULTS['max_samples_per_class'],
         type=int
     )
+    val_split = request.form.get('local_val_split', default=LOCAL_PARAM_DEFAULTS['val_split'], type=float)
+    early_stop_patience = request.form.get('local_early_stop_patience', default=LOCAL_PARAM_DEFAULTS['early_stop_patience'], type=int)
+    weight_decay = request.form.get('local_weight_decay', default=LOCAL_PARAM_DEFAULTS['weight_decay'], type=float)
+    dropout = request.form.get('local_dropout', default=LOCAL_PARAM_DEFAULTS['dropout'], type=float)
+    augment = request.form.get('local_augment', default=LOCAL_PARAM_DEFAULTS['augment'])
+    use_class_weights_raw = request.form.get('local_use_class_weights', default='on')
+    use_class_weights = str(use_class_weights_raw).lower() != 'off'
+    label_smoothing = request.form.get('local_label_smoothing', default=LOCAL_PARAM_DEFAULTS['label_smoothing'], type=float)
+    lr_schedule = request.form.get('local_lr_schedule', default=LOCAL_PARAM_DEFAULTS['lr_schedule'])
+    warmup_epochs = request.form.get('local_warmup_epochs', default=LOCAL_PARAM_DEFAULTS['warmup_epochs'], type=int)
 
     # Validate epochs
     epoch_limits = LOCAL_PARAM_LIMITS['epochs']
@@ -1835,9 +2058,62 @@ def retrain_local_model():
         flash(f"Max samples per class must be between {sample_limits['min']} and {sample_limits['max']}.", 'danger')
         return redirect(url_for('model'))
 
+    val_limits = LOCAL_PARAM_LIMITS['val_split']
+    if val_split is None or val_split < val_limits['min'] or val_split > val_limits['max']:
+        flash(f"Validation split must be between {val_limits['min']} and {val_limits['max']} (fraction).", 'danger')
+        return redirect(url_for('model'))
+
+    patience_limits = LOCAL_PARAM_LIMITS['early_stop_patience']
+    if early_stop_patience is None or early_stop_patience < patience_limits['min'] or early_stop_patience > patience_limits['max']:
+        flash(f"Early-stop patience must be between {patience_limits['min']} and {patience_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
+    if weight_decay not in LOCAL_PARAM_LIMITS['weight_decay']:
+        flash('Invalid weight decay selected for local training.', 'danger')
+        return redirect(url_for('model'))
+
+    dropout_limits = LOCAL_PARAM_LIMITS['dropout']
+    if dropout is None or dropout < dropout_limits['min'] or dropout > dropout_limits['max']:
+        flash(f"Dropout must be between {dropout_limits['min']} and {dropout_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
+    if augment not in LOCAL_PARAM_LIMITS['augment']:
+        flash('Invalid augmentation option selected.', 'danger')
+        return redirect(url_for('model'))
+
+    label_smoothing_limits = LOCAL_PARAM_LIMITS['label_smoothing']
+    if label_smoothing is None or label_smoothing < label_smoothing_limits['min'] or label_smoothing > label_smoothing_limits['max']:
+        flash(f"Label smoothing must be between {label_smoothing_limits['min']} and {label_smoothing_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
+    if lr_schedule not in LOCAL_PARAM_LIMITS['lr_schedule']:
+        flash('Invalid learning rate schedule option.', 'danger')
+        return redirect(url_for('model'))
+
+    warmup_limits = LOCAL_PARAM_LIMITS['warmup_epochs']
+    if warmup_epochs is None or warmup_epochs < warmup_limits['min'] or warmup_epochs > warmup_limits['max']:
+        flash(f"Warmup epochs must be between {warmup_limits['min']} and {warmup_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
     retrain_thread = threading.Thread(
         target=run_local_retraining,
-        args=(epochs, learning_rate, batch_size, seed, class_count, max_samples_per_class)
+        args=(
+            epochs,
+            learning_rate,
+            batch_size,
+            seed,
+            class_count,
+            max_samples_per_class,
+            val_split,
+            early_stop_patience,
+            weight_decay,
+            dropout,
+            augment,
+            use_class_weights,
+            label_smoothing,
+            lr_schedule,
+            warmup_epochs
+        )
     )
     retrain_thread.start()
 

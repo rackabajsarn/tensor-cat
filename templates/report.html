@@ -39,7 +39,7 @@
         </div>
 
         <div class="report-card">
-            <h3>Classification Report</h3>
+            <h3>Training Classification Report</h3>
             {% set report = metrics.report %}
             {% if report %}
             <table>
@@ -60,7 +60,7 @@
                 </tr>
                 {% endfor %}
                 <tr>
-                    <td colspan="4"><strong>Accuracy</strong></td>
+                    <td colspan="4"><strong>Training accuracy</strong></td>
                     <td><strong>{{ '%.2f' % report.accuracy }}</strong></td>
                 </tr>
             </table>
@@ -72,15 +72,25 @@
 
         {% if metrics and metrics.confusion_matrix %}
         <div class="report-card">
-            <h3>Confusion Matrix</h3>
+            <h3>Training Confusion Matrix</h3>
             <div class="report-card-body">
                 <canvas id="confusionMatrixChart"></canvas>
             </div>
         </div>
         {% elif has_confusion %}
         <div class="report-card">
-            <h3>Confusion Matrix</h3>
+            <h3>Training Confusion Matrix</h3>
             <img src="{{ url_for('serve_version_image', scope=scope, version_name=version_name, filename='confusion_matrix.png') }}" alt="Confusion matrix">
+        </div>
+        {% endif %}
+
+        {% if empirical_metrics %}
+        <div class="report-card">
+            <h3>Accumulated Accuracy (live)</h3>
+            <p><strong>{{ '%.1f' % (empirical_metrics.accuracy * 100) }}%</strong> ({{ empirical_metrics.correct }}/{{ empirical_metrics.total }})</p>
+            <div class="report-card-body">
+                <canvas id="confusionMatrixLive"></canvas>
+            </div>
         </div>
         {% endif %}
 
@@ -249,12 +259,18 @@
         const metricsPayload = {{ {
             'curves': metrics.curves if metrics and metrics.curves else {},
             'confusion_matrix': metrics.confusion_matrix if metrics and metrics.confusion_matrix else [],
-            'classes': metrics.classes if metrics and metrics.classes else []
+            'classes': metrics.classes if metrics and metrics.classes else [],
+            'live_cm': empirical_metrics.confusion_matrix if empirical_metrics else [],
+            'live_classes': empirical_metrics.classes if empirical_metrics else [],
+            'live_accuracy': empirical_metrics.accuracy if empirical_metrics else None,
+            'live_total': empirical_metrics.total if empirical_metrics else None,
         } | tojson | safe }};
 
         const curves = metricsPayload.curves || {};
         const cmData = metricsPayload.confusion_matrix || [];
         const cmLabels = metricsPayload.classes || [];
+        const liveCM = metricsPayload.live_cm || [];
+        const liveLabels = metricsPayload.live_classes || [];
 
         if (curves && (curves.accuracy || curves.val_accuracy)) {
             const ctxAcc = document.getElementById('accuracyChart');
@@ -436,6 +452,90 @@
                             },
                         },
                     },
+                });
+            }
+        }
+
+        if (liveCM && liveCM.length && liveCM[0].length) {
+            const ctxLive = document.getElementById('confusionMatrixLive');
+            if (ctxLive) {
+                const flatValues = liveCM.flat();
+                const maxVal = flatValues.reduce((m, v) => Math.max(m, v), 0) || 1;
+                const matrixData = liveCM.flatMap((row, i) => row.map((v, j) => ({ x: j, y: i, v })));
+                Chart.register(ChartDataLabels);
+                new Chart(ctxLive, {
+                    type: 'matrix',
+                    data: {
+                        datasets: [
+                            {
+                                label: 'Accumulated Confusion',
+                                data: matrixData,
+                                backgroundColor: function(ctx) {
+                                    var value = ctx.raw && ctx.raw.v ? ctx.raw.v : 0;
+                                    var ratio = value / maxVal;
+                                    var alpha = 0.25 + 0.75 * ratio;
+                                    return 'rgba(26, 188, 156, ' + alpha + ')';
+                                },
+                                borderWidth: 1,
+                                borderColor: 'rgba(0, 0, 0, 0.6)',
+                                width: function(chartCtx) {
+                                    var area = chartCtx.chart.chartArea;
+                                    if (!area) { return 0; }
+                                    var totalWidth = area.right - area.left;
+                                    return totalWidth / liveCM[0].length;
+                                },
+                                height: function(chartCtx) {
+                                    var area = chartCtx.chart.chartArea;
+                                    if (!area) { return 0; }
+                                    var totalHeight = area.bottom - area.top;
+                                    return totalHeight / liveCM.length;
+                                },
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    title: function(items) {
+                                        var item = items[0];
+                                        var i = item.raw.y;
+                                        var j = item.raw.x;
+                                        var trueLabel = liveLabels[i] || ('True ' + i);
+                                        var predLabel = liveLabels[j] || ('Pred ' + j);
+                                        return trueLabel + ' → ' + predLabel;
+                                    },
+                                    label: function(item) {
+                                        return 'Count: ' + item.raw.v;
+                                    }
+                                }
+                            },
+                            datalabels: {
+                                color: '#000',
+                                formatter: function(value, ctx) {
+                                    return value.v;
+                                },
+                                font: { weight: 'bold' }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                type: 'category',
+                                labels: liveLabels,
+                                position: 'top',
+                                ticks: { display: true }
+                            },
+                            y: {
+                                type: 'category',
+                                labels: liveLabels,
+                                reverse: true,
+                                ticks: { display: true }
+                            }
+                        }
+                    }
                 });
             }
         }
