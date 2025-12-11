@@ -921,8 +921,10 @@ def write_imghash(image_path, img_hash):
             # No EXIF data present
             exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
 
+        # Ensure Exif block exists, then store the hash in UserComment (Exif IFD)
+        exif_dict.setdefault('Exif', {})
         exiftag = img_hash
-        exif_dict['0th'][piexif.ImageIFD.UserComment] = exiftag.encode('utf-8')
+        exif_dict['Exif'][piexif.ExifIFD.UserComment] = exiftag.encode('utf-8')
         exif_bytes = piexif.dump(exif_dict)
         img.save(image_path, "jpeg", exif=exif_bytes)
         return True
@@ -935,7 +937,7 @@ def read_imghash(image_path):
     try:
         img = Image.open(image_path)
         exif_dict = piexif.load(img.info.get('exif', b''))
-        raw = exif_dict['0th'].get(piexif.ImageIFD.UserComment)
+        raw = exif_dict.get('Exif', {}).get(piexif.ExifIFD.UserComment)
         if raw is None:
             return None
         if isinstance(raw, bytes):
