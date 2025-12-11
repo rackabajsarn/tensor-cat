@@ -97,8 +97,8 @@ cd tensor-cat
 python train_model.py --epochs 10 --fine_tune_epochs 5
 python train_simple_model.py --epochs 40
 
-# Upload to ESP32
-curl -F "file=@simple_model/my_simple_model_quant.tflite" http://192.168.1.14/upload
+# Upload to ESP32 (replace <RUN_ID> with the folder under models/local created by the training run)
+curl -F "file=@models/local/<RUN_ID>/model/my_simple_model_quant.tflite" http://192.168.1.14/upload
 ```
 
 ---
@@ -121,7 +121,7 @@ Uptime: 123s
 ### 2. Test Model Upload
 ```bash
 # From tensor-cat directory
-curl -F "file=@simple_model/my_simple_model_quant.tflite" http://192.168.1.14/upload
+curl -F "file=@models/local/<RUN_ID>/model/my_simple_model_quant.tflite" http://192.168.1.14/upload
 ```
 
 Expected: `Model uploaded successfully`
@@ -234,7 +234,7 @@ mosquitto_sub -h MQTT_BROKER -t "catflap/debug" -v
 ### Model Upload Fails
 1. Check ESP32 IP: `ping 192.168.1.14`
 2. Verify SD card inserted
-3. Check file size: `ls -lh simple_model/*.tflite`
+3. Check file size: `ls -lh models/local/<RUN_ID>/model/*.tflite`
 4. Review ESP32 serial output
 
 ### Inference Not Working
@@ -303,13 +303,13 @@ cp CatCam2/lib/model/model.cc model_backup_$(date +%Y%m%d).cc
 
 # Server models
 cp model/my_model_quant_edgetpu.tflite model_backup_$(date +%Y%m%d).tflite
-cp simple_model/my_simple_model_quant.tflite simple_backup_$(date +%Y%m%d).tflite
+cp models/local/<RUN_ID>/model/my_simple_model_quant.tflite local_simple_backup_$(date +%Y%m%d).tflite
 ```
 
 ### Restore Model
 ```bash
 # Upload to ESP32 SD card
-curl -F "file=@simple_backup_20250101.tflite" http://ESP32_IP/upload
+curl -F "file=@local_simple_backup_20250101.tflite" http://ESP32_IP/upload
 
 # Or replace embedded model
 cp model_backup_20250101.cc CatCam2/lib/model/model.cc

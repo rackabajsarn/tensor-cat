@@ -69,7 +69,7 @@ When user clicks "Retrain Model" in web UI:
    - Script: `train_simple_model.py`
    - Input: 96x96 grayscale images
    - Classes: not_cat, not_prey, prey
-   - Output: `simple_model/my_simple_model_quant.tflite`
+   - Output: `models/local/<run_id>/model/my_simple_model_quant.tflite`
 
 3. **Upload to ESP32**
    - HTTP POST to `http://ESP32_IP/upload`
@@ -211,7 +211,7 @@ python train_simple_model.py --epochs 40
 ### 3. Upload Simple Model to ESP32
 Automatic after training completes, or manually:
 ```bash
-curl -F "file=@simple_model/my_simple_model_quant.tflite" http://ESP32_IP/upload
+curl -F "file=@models/local/<RUN_ID>/model/my_simple_model_quant.tflite" http://ESP32_IP/upload
 ```
 
 ### 4. Monitor in Home Assistant

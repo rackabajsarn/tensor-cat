@@ -15,8 +15,8 @@ import sqlite3
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory
 from paho.mqtt import client as mqtt_client
 import piexif
-from PIL import Image
-from PIL import ImageOps
+from PIL import Image, ImageOps
+
 
 
 def _consume_flag(flag_name):
@@ -37,9 +37,9 @@ else:
 try:
     if OFFLINE_MODE:
         raise ImportError("Offline mode active")
-    from pycoral.utils.edgetpu import make_interpreter
-    from pycoral.adapters.common import set_input
-    from pycoral.adapters.classify import get_classes
+    from pycoral.utils.edgetpu import make_interpreter  # type: ignore
+    from pycoral.adapters.common import set_input  # type: ignore
+    from pycoral.adapters.classify import get_classes  # type: ignore
     PY_CORAL_AVAILABLE = True
 except ImportError:
     make_interpreter = None
@@ -54,6 +54,7 @@ app.secret_key = credentials.SECRET_KEY
 MQTT_BROKER = credentials.MQTT_SERVER
 MQTT_PORT = 1883
 MQTT_TOPIC = 'catflap/image'
+ESP_INFERENCE_TOPIC = 'catflap/esp32_inference'
 
 # Directories
 STATIC_IMAGES_DIR = 'static/images'
@@ -143,6 +144,32 @@ def get_active_local_class_count(default=LOCAL_PARAM_DEFAULTS["class_count"]):
         logging.error(f"Failed to read class_count for active local model {version}: {e}")
 
     return default
+
+
+def compute_simple_class(class_count, *, predicted_label=None, labels=None):
+    """Return collapsed simple class ('prey', 'not_cat', or 'not_prey').
+
+    Uses either a predicted_label string or label flags dict. class_count controls
+    whether 'not_cat' is distinct (3-class) or merged into 'not_prey' (2-class).
+    """
+    if predicted_label is not None:
+        if predicted_label == "prey":
+            return "prey"
+        if class_count == 3 and predicted_label == "not_cat":
+            return "not_cat"
+        return "not_prey"
+
+    if isinstance(labels, dict):
+        prey_flag = labels.get("prey")
+        cat_flag = labels.get("cat")
+
+        if prey_flag:
+            return "prey"
+        if class_count == 3 and cat_flag is False:
+            return "not_cat"
+        return "not_prey"
+
+    return None
 
 
 def set_active_model(scope, version_name):
@@ -430,7 +457,8 @@ def init_db():
                 """
                 CREATE TABLE IF NOT EXISTS inference_log (
                     hash TEXT PRIMARY KEY,
-                    timestamp TEXT,
+                    timestamp_server TEXT,
+                    timestamp_esp TEXT,
                     esp32_model TEXT,
                     server_model TEXT,
                     esp32_inference TEXT,
@@ -461,20 +489,22 @@ def hash_to_name(data: bytes) -> str:
     return f"{fnv1a_32(data):08X}"
 
 
-def upsert_inference_record(hash_hex, *, timestamp, esp32_model=None, server_model=None,
-                            esp32_inference=None, server_inference=None, server_simple_inference=None,
-                            true_label=None, esp32_confidence=None, server_confidence=None):
+def upsert_inference_record(hash_hex, *, timestamp_server=None, timestamp_esp=None, esp32_model=None,
+                            server_model=None, esp32_inference=None, server_inference=None,
+                            server_simple_inference=None, true_label=None, esp32_confidence=None,
+                            server_confidence=None):
     try:
         with db_lock, sqlite3.connect(DB_PATH) as conn:
             conn.execute(
                 """
                 INSERT INTO inference_log (
-                    hash, timestamp, esp32_model, server_model,
+                    hash, timestamp_server, timestamp_esp, esp32_model, server_model,
                     esp32_inference, server_inference, server_simple_inference, true_label,
                     esp32_confidence, server_confidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(hash) DO UPDATE SET
-                    timestamp=excluded.timestamp,
+                    timestamp_server=excluded.timestamp_server,
+                    timestamp_esp=excluded.timestamp_esp,
                     esp32_model=excluded.esp32_model,
                     server_model=excluded.server_model,
                     esp32_inference=excluded.esp32_inference,
@@ -484,7 +514,7 @@ def upsert_inference_record(hash_hex, *, timestamp, esp32_model=None, server_mod
                     esp32_confidence=excluded.esp32_confidence,
                     server_confidence=excluded.server_confidence;
                 """,
-                [hash_hex, timestamp, esp32_model, server_model,
+                 [hash_hex, timestamp_server, timestamp_esp, esp32_model, server_model,
                  esp32_inference, server_inference, server_simple_inference, true_label,
                  esp32_confidence, server_confidence]
             )
@@ -551,6 +581,7 @@ def mqtt_on_connect(client, userdata, flags, rc):
         print("Connected to MQTT Broker!")
         initial_connection = True
         client.subscribe(MQTT_TOPIC)
+        client.subscribe(ESP_INFERENCE_TOPIC)
     else:
         print(f"Failed to connect to MQTT Broker, return code {rc}")
 
@@ -567,6 +598,33 @@ def mqtt_on_message(client, userdata, msg):
         initial_connection = False
 
     try:
+        # Handle ESP32 inference results published as JSON
+        if msg.topic == ESP_INFERENCE_TOPIC:
+            try:
+                payload = json.loads(msg.payload.decode('utf-8'))
+            except Exception as json_err:
+                logging.error(f"Failed to parse ESP32 inference payload: {json_err}")
+                return
+
+            hash_hex = payload.get('hash')
+            esp_label = payload.get('label')
+            esp_conf = payload.get('confidence')
+            esp_model = payload.get('model')
+
+            if not hash_hex or not esp_label:
+                logging.error(f"ESP32 inference payload missing hash/label: {payload}")
+                return
+
+            timestamp_iso = datetime.datetime.now(datetime.timezone.utc).isoformat() + 'Z'
+            upsert_inference_record(
+                hash_hex,
+                timestamp_esp=timestamp_iso,
+                esp32_model=esp_model,
+                esp32_inference=esp_label,
+                esp32_confidence=esp_conf,
+            )
+            return
+
         image_data = msg.payload
         # Generate timestamped filename
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -622,17 +680,12 @@ def mqtt_on_message(client, userdata, msg):
         img_hash = hash_to_name(image_data)
         active_models = get_active_models()
         local_class_count = get_active_local_class_count()
-        if predicted_label == "prey":
-            server_simple = "prey"
-        elif local_class_count == 3 and predicted_label == "not_cat":
-            server_simple = "not_cat"
-        else:
-            server_simple = "not_prey"
+        server_simple = compute_simple_class(local_class_count, predicted_label=predicted_label)
         server_model_name = active_models.get('server') if isinstance(active_models, dict) else None
         timestamp_iso = datetime.datetime.now(datetime.timezone.utc).isoformat() + 'Z'
         upsert_inference_record(
             img_hash,
-            timestamp=timestamp_iso,
+            timestamp_server=timestamp_iso,
             server_model=server_model_name,
             server_inference=predicted_label,
             server_simple_inference=server_simple,
@@ -643,6 +696,7 @@ def mqtt_on_message(client, userdata, msg):
         
         # Write labels to EXIF
         write_labels(image_path, labels)
+        write_imghash(image_path, img_hash)
         
         # client.publish('catflap/debug', f"Inference ({predicted_label}) done in {int((end - start)*1000)} ms")
         new_images = count_current_classify_images()
@@ -727,6 +781,49 @@ def write_labels(image_path, labels):
         print(f"Error writing labels to {image_path}: {e}")
         return False
 
+def write_imghash(image_path, img_hash):
+    try:
+        img = Image.open(image_path)
+        # Attempt to retrieve existing EXIF data
+        exif_bytes = img.info.get('exif', None)
+        
+        if exif_bytes:
+            try:
+                exif_dict = piexif.load(exif_bytes)
+            except piexif.InvalidImageDataError:
+                print(f"Invalid EXIF data for {image_path}, initializing new EXIF.")
+                exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+        else:
+            # No EXIF data present
+            exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+
+        exiftag = img_hash
+        exif_dict['0th'][piexif.ImageIFD.UserComment] = exiftag.encode('utf-8')
+        exif_bytes = piexif.dump(exif_dict)
+        img.save(image_path, "jpeg", exif=exif_bytes)
+        return True
+    except Exception as e:
+        print(f"Error writing hash to {image_path}: {e}")
+        return False
+
+
+def read_imghash(image_path):
+    try:
+        img = Image.open(image_path)
+        exif_dict = piexif.load(img.info.get('exif', b''))
+        raw = exif_dict['0th'].get(piexif.ImageIFD.UserComment)
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            try:
+                return raw.decode('utf-8')
+            except Exception:
+                return raw.decode(errors='ignore')
+        return str(raw)
+    except Exception as e:
+        logging.error(f"Error reading hash from {image_path}: {e}")
+        return None
+
 def classify_image(image_path):
     try:
         # Preprocess the image
@@ -783,16 +880,16 @@ def upload_model_to_esp32(version_name=None):
             logging.info("Offline mode - skipping ESP32 model upload.")
             return False, "offline mode"
 
-        # Prefer the provided version; otherwise use the active local version; otherwise legacy simple_model
-        if version_name:
-            model_path = os.path.join(LOCAL_MODELS_DIR, version_name, 'model', 'my_simple_model_quant.tflite')
-        else:
-            active = get_active_models()
-            local_version = active.get('local')
-            if local_version:
-                model_path = os.path.join(LOCAL_MODELS_DIR, local_version, 'model', 'my_simple_model_quant.tflite')
-            else:
-                model_path = os.path.join('simple_model', 'my_simple_model_quant.tflite')
+        # Prefer the provided version; otherwise use the active local version
+        active = get_active_models()
+        local_version = version_name or (active.get('local') if isinstance(active, dict) else None)
+
+        if not local_version:
+            msg = "No local model version is active; cannot upload to ESP32"
+            logging.error(msg)
+            return False, msg
+
+        model_path = os.path.join(LOCAL_MODELS_DIR, local_version, 'model', 'my_simple_model_quant.tflite')
         if not os.path.exists(model_path):
             msg = f"Simple model file not found at {model_path}"
             logging.error(msg)
@@ -800,7 +897,8 @@ def upload_model_to_esp32(version_name=None):
         
         # ESP32 IP address - should be configurable
         esp32_ip = credentials.ESP32_IP if hasattr(credentials, 'ESP32_IP') else '192.168.1.14'
-        upload_url = f'http://{esp32_ip}/upload'
+        upload_url = f'http://{esp32_ip}/upload_model'
+        metadata_url = f'http://{esp32_ip}/upload_metadata'
         
         logging.info(f"Uploading model to ESP32 at {upload_url}...")
         
@@ -816,6 +914,59 @@ def upload_model_to_esp32(version_name=None):
             msg = "Model uploaded successfully to ESP32"
             logging.info(msg)
             retraining_status['output'] += "\nModel uploaded to ESP32 successfully!\n"
+
+            # Build minimal metadata JSON expected by ESP32
+            metadata_payload = {
+                "model_name": str(local_version),
+                "number_of_labels": int(get_active_local_class_count()),
+                "threshold_value": 0.5,
+            }
+
+            metrics_path = os.path.join(LOCAL_MODELS_DIR, local_version, 'reports', 'metrics.json')
+            try:
+                if os.path.exists(metrics_path):
+                    with open(metrics_path, 'r') as mf:
+                        metrics_obj = json.load(mf)
+
+                    training_params = metrics_obj.get('training_params', {}) if isinstance(metrics_obj, dict) else {}
+                    classes_list = metrics_obj.get('classes') if isinstance(metrics_obj, dict) else None
+
+                    class_count_val = training_params.get('class_count') if isinstance(training_params, dict) else None
+                    if not isinstance(class_count_val, int) and isinstance(classes_list, list):
+                        class_count_val = len(classes_list)
+                    if isinstance(class_count_val, int) and class_count_val > 0:
+                        metadata_payload['number_of_labels'] = class_count_val
+
+                    thr_val = training_params.get('prey_threshold') if isinstance(training_params, dict) else None
+                    try:
+                        if thr_val is not None:
+                            metadata_payload['threshold_value'] = float(thr_val)
+                    except (TypeError, ValueError):
+                        pass
+
+            except Exception as meta_err:
+                logging.error(f"Failed to build metadata for ESP32 upload: {meta_err}")
+
+            try:
+                metadata_bytes = json.dumps(metadata_payload).encode('utf-8')
+                metadata_files = {'file': ('metadata.json', metadata_bytes, 'application/json')}
+                logging.info(f"Uploading metadata to ESP32 at {metadata_url}...")
+                meta_response = requests.post(metadata_url, files=metadata_files, timeout=15)
+                if meta_response.status_code == 200:
+                    meta_msg = "Metadata uploaded successfully to ESP32"
+                    logging.info(meta_msg)
+                    retraining_status['output'] += "Metadata uploaded to ESP32 successfully!\n"
+                else:
+                    error_msg = f"Failed to upload metadata to ESP32: {meta_response.status_code} - {meta_response.text}"
+                    logging.error(error_msg)
+                    retraining_status['output'] += f"\n{error_msg}\n"
+                    return False, error_msg
+            except Exception as meta_err:
+                error_msg = f"Error uploading metadata to ESP32: {meta_err}"
+                logging.error(error_msg)
+                retraining_status['output'] += f"\n{error_msg}\n"
+                return False, error_msg
+
             return True, msg
         else:
             error_msg = f"Failed to upload model to ESP32: {response.status_code} - {response.text}"
@@ -1218,6 +1369,22 @@ def update_label():
         success = write_labels(image_path, labels)
 
         if success:
+            # When labeling gallery images, record true_label using simple class mapping.
+            if mode == 'gallery':
+                img_hash = read_imghash(image_path)
+                if img_hash:
+                    class_count = get_active_local_class_count()
+                    simple_true = compute_simple_class(class_count, labels=labels)
+                    try:
+                        upsert_inference_record(
+                            img_hash,
+                            true_label=simple_true,
+                        )
+                    except Exception as log_err:
+                        logging.error(f"Failed to upsert true_label for {img_hash}: {log_err}")
+                else:
+                    logging.warning(f"No EXIF hash found for {image_path}; skipping true_label upsert")
+
             return jsonify({'success': True, 'labels': labels})
         else:
             return jsonify({'success': False, 'message': 'Failed to update labels.'}), 500
@@ -1372,14 +1539,26 @@ def save_current_model(scope):
     # Check if model files exist
     if scope == 'server':
         model_check_path = os.path.join(MODEL_DIR, MODEL_NAME)
+        if not os.path.exists(model_check_path):
+            return jsonify({'error': f'No {scope} model found to save'}), 404
     else:
-        model_check_path = os.path.join('simple_model', 'my_simple_model_quant.tflite')
-    
-    if not os.path.exists(model_check_path):
-        return jsonify({'error': f'No {scope} model found to save'}), 404
+        active = get_active_models()
+        active_local = active.get('local') if isinstance(active, dict) else None
+        if not active_local:
+            return jsonify({'error': 'No active local model to save'}), 404
+
+        model_check_path = os.path.join(LOCAL_MODELS_DIR, active_local, 'model', 'my_simple_model_quant.tflite')
+        if not os.path.exists(model_check_path):
+            return jsonify({'error': f'Active local model files missing at {model_check_path}'}), 404
     
     try:
         timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        if scope == 'local':
+            # Snapshot the currently active local version into a new version directory
+            source_dir = os.path.join(LOCAL_MODELS_DIR, active_local)
+            dest_dir = os.path.join(LOCAL_MODELS_DIR, timestamp_str)
+            shutil.copytree(source_dir, dest_dir)
+
         version_dir = save_model_version(scope, timestamp_str)
         set_active_model(scope, timestamp_str)
         
@@ -1435,21 +1614,20 @@ def activate_version(scope, version_name):
         return jsonify({'error': 'Version not found'}), 404
     
     try:
-        # Copy model files back to active location
+        # Ensure model artifacts exist
         model_src_dir = os.path.join(version_dir, 'model')
+        if not os.path.exists(model_src_dir):
+            return jsonify({'error': f'Model artifacts missing for {version_name}'}), 404
+
+        # For server scope, copy model files back to active location for TPU inference
         if scope == 'server':
-            model_dest_dir = MODEL_DIR
-        else:
-            model_dest_dir = 'simple_model'
-        
-        if os.path.exists(model_src_dir):
-            os.makedirs(model_dest_dir, exist_ok=True)
+            os.makedirs(MODEL_DIR, exist_ok=True)
             for item in os.listdir(model_src_dir):
                 src_item = os.path.join(model_src_dir, item)
-                dest_item = os.path.join(model_dest_dir, item)
+                dest_item = os.path.join(MODEL_DIR, item)
                 if os.path.isfile(src_item):
                     shutil.copy2(src_item, dest_item)
-        
+
         # For local scope, upload to ESP32 before marking active
         if scope == 'local':
             success, msg = upload_model_to_esp32(version_name)

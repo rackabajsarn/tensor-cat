@@ -60,7 +60,6 @@ tf.random.set_seed(SEED)
 # Paths (per-version under models/local/<run_id>)
 # -----------------------------
 DATASET_IMAGES_DIR = 'dataset/images'
-MODEL_DIR = 'simple_model'
 MODEL_NAME = 'my_simple_model_quant'
 MODELS_ROOT = 'models'
 LOCAL_MODELS_DIR = os.path.join(MODELS_ROOT, 'local')
