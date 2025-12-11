@@ -384,7 +384,25 @@ if __name__ == '__main__':
     precision_prey = tf.keras.metrics.Precision(class_id=prey_index, name='precision_prey')
     recall_prey = tf.keras.metrics.Recall(class_id=prey_index, name='recall_prey')
 
-    loss = tf.keras.losses.SparseCategoricalCrossentropy(label_smoothing=LABEL_SMOOTHING)
+    def make_loss():
+        try:
+            return tf.keras.losses.SparseCategoricalCrossentropy(label_smoothing=LABEL_SMOOTHING)
+        except TypeError:
+            # Fallback for older TF/Keras builds without label_smoothing support on sparse CCE
+            if LABEL_SMOOTHING > 0:
+                print("SparseCategoricalCrossentropy lacks label_smoothing; applying manual smoothing.")
+
+                def smoothed_sparse_cce(y_true, y_pred):
+                    y_true = tf.cast(tf.squeeze(y_true), tf.int32)
+                    y_true_one_hot = tf.one_hot(y_true, depth=CLASS_COUNT)
+                    smooth = LABEL_SMOOTHING
+                    y_true_smooth = y_true_one_hot * (1.0 - smooth) + smooth / float(CLASS_COUNT)
+                    return tf.keras.losses.categorical_crossentropy(y_true_smooth, y_pred)
+
+                return smoothed_sparse_cce
+            return tf.keras.losses.SparseCategoricalCrossentropy()
+
+    loss = make_loss()
     model.compile(
         optimizer=optimizer,
         loss=loss,

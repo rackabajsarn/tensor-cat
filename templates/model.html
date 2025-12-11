@@ -422,10 +422,10 @@
         <button class="help-close" type="button" aria-label="Close" data-help-close>&times;</button>
         <h3 id="server-help-title">Server Parameters</h3>
         <ul class="help-list">
-            <li><strong>Epochs</strong> — initial training passes before fine-tuning.</li>
-            <li><strong>Fine-tune Epochs</strong> — additional passes after unfreezing deeper layers.</li>
-            <li><strong>Learning Rate</strong> — step size for optimizer; smaller is safer, larger learns faster but risks divergence.</li>
-            <li><strong>Unfreeze From Layer</strong> — where to start training deeper layers; higher numbers keep more of the base model frozen.</li>
+            <li><strong>Epochs</strong> — passes on the frozen base. More can improve fit until validation loss stops dropping; too many may overfit.</li>
+            <li><strong>Fine-tune Epochs</strong> — extra passes after unfreezing. Keep modest to avoid destroying pretrained features; extend only if validation keeps improving.</li>
+            <li><strong>Learning Rate</strong> — optimizer step size. Higher = faster progress but can spike loss; lower = steadier, slower. If loss oscillates, lower this.</li>
+            <li><strong>Unfreeze From Layer</strong> — layer index where fine-tuning begins. Higher index freezes more of the backbone (safer, less compute); lower index retrains more layers (potentially better accuracy, higher overfit risk).</li>
         </ul>
     </div>
 </div>
@@ -435,21 +435,21 @@
         <button class="help-close" type="button" aria-label="Close" data-help-close>&times;</button>
         <h3 id="local-help-title">Local Parameters</h3>
         <ul class="help-list">
-            <li><strong>Epochs</strong> — total training passes.</li>
-            <li><strong>Validation Split</strong> — fraction of data held out for validation.</li>
-            <li><strong>Learning Rate</strong> — optimizer step size.</li>
-            <li><strong>Batch Size</strong> — images per training step.</li>
-            <li><strong>Classes</strong> — choose 2-class (prey / not_prey) or 3-class (adds not_cat).</li>
-            <li><strong>Max Samples Per Class</strong> — optional cap per class (0 uses all).</li>
-            <li><strong>Seed</strong> — controls shuffling/reproducibility.</li>
-            <li><strong>Early Stop Patience</strong> — epochs to wait on validation loss before stopping.</li>
-            <li><strong>Weight Decay</strong> — L2 regularization for better generalization.</li>
-            <li><strong>Dropout</strong> — fraction of activations dropped before the classifier head.</li>
-            <li><strong>Augmentation</strong> — light/medium perturbations applied to training images.</li>
-            <li><strong>Class Weights</strong> — rebalance training toward underrepresented classes.</li>
-            <li><strong>Label Smoothing</strong> — softens targets to reduce overconfidence.</li>
-            <li><strong>LR Schedule</strong> — constant, cosine decay, or step schedule.</li>
-            <li><strong>Warmup Epochs</strong> — gentle ramp-up for the learning rate at start.</li>
+            <li><strong>Epochs</strong> — total passes. Increase until validation loss plateaus; excessive values overfit and waste time.</li>
+            <li><strong>Validation Split</strong> — percent held out for validation. More split = better feedback but fewer training samples.</li>
+            <li><strong>Learning Rate</strong> — step size. Too high = unstable loss; too low = slow progress. Nudge down if loss spikes.</li>
+            <li><strong>Batch Size</strong> — images per step. Larger is smoother/faster on CPU but can generalize slightly worse; smaller is noisier but sometimes better.</li>
+            <li><strong>Classes</strong> — 2-class (prey/not_prey) vs 3-class (adds not_cat). Changing this resets labels and metrics to the new outputs.</li>
+            <li><strong>Max Samples Per Class</strong> — cap per class for speed/balance. 0 = use all; lower caps shorten training but may drop rare edge cases.</li>
+            <li><strong>Seed</strong> — fixes shuffling/splits for reproducible results.</li>
+            <li><strong>Early Stop Patience</strong> — epochs to wait for val loss to improve. Lower stops earlier (less overfit), higher allows longer climbs.</li>
+            <li><strong>Weight Decay</strong> — L2 regularization on weights. Small values reduce overfitting; large values can underfit.</li>
+            <li><strong>Dropout</strong> — fraction of features dropped before the head. Higher adds regularization; too high hurts accuracy. No effect at inference time.</li>
+            <li><strong>Augmentation</strong> — off/light/medium image perturbations. More aug improves robustness but can slow convergence if labels are noisy.</li>
+            <li><strong>Class Weights</strong> — rebalances loss toward rare classes. Turn on when one class dominates; turn off if classes are already balanced.</li>
+            <li><strong>Label Smoothing</strong> — softens targets to curb overconfidence. Use small values (≤0.1); too much degrades accuracy.</li>
+            <li><strong>LR Schedule</strong> — constant (steady), cosine (smooth decay), or step (sharp drops mid-training). Decay usually helps late-epoch stability.</li>
+            <li><strong>Warmup Epochs</strong> — slowly ramp the LR at the start. Useful when using higher LRs or heavy augmentation; 1–3 is typical.</li>
         </ul>
     </div>
 </div>
