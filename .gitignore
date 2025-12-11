@@ -7,3 +7,4 @@ static/reports/
 models/
 logs/
 simple_model/
+tensor_cat.db
