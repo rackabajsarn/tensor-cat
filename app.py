@@ -813,7 +813,16 @@ def mqtt_on_message(client, userdata, msg):
             server_model=server_model_name,
             server_inference=predicted_label,
             server_simple_inference=server_simple,
-            server_confidence=server_confidence,
+            server_confidence=float(server_confidence) if server_confidence is not None else None,
+        )
+        logging.info(
+            "SERVER upsert hash=%s label=%s simple=%s conf=%s model=%s ts=%s",
+            img_hash,
+            predicted_label,
+            server_simple,
+            server_confidence,
+            server_model_name,
+            timestamp_iso,
         )
 
         server_payload = json.dumps({
