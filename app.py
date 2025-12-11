@@ -11,6 +11,7 @@ import subprocess
 import numpy as np
 import copy
 import sys
+import sqlite3
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory
 from paho.mqtt import client as mqtt_client
 import piexif
@@ -64,6 +65,7 @@ MODELS_DIR = 'models'
 SERVER_MODELS_DIR = os.path.join(MODELS_DIR, 'server')
 LOCAL_MODELS_DIR = os.path.join(MODELS_DIR, 'local')
 ACTIVE_MODEL_FILE = os.path.join(MODELS_DIR, 'active.json')
+DB_PATH = os.path.join(os.getcwd(), 'tensor_cat.db')
 
 # Ensure model directories exist
 os.makedirs(SERVER_MODELS_DIR, exist_ok=True)
@@ -114,6 +116,33 @@ def get_active_models():
         except Exception:
             pass
     return {"server": None, "local": None}
+
+
+def get_active_local_class_count(default=LOCAL_PARAM_DEFAULTS["class_count"]):
+    """Return class_count (2 or 3) for the active local model based on its metrics.json."""
+    active = get_active_models()
+    version = active.get('local') if isinstance(active, dict) else None
+    if not version:
+        return default
+
+    metrics_path = os.path.join(LOCAL_MODELS_DIR, version, 'reports', 'metrics.json')
+    try:
+        with open(metrics_path, 'r') as f:
+            metrics = json.load(f)
+
+        if isinstance(metrics, dict):
+            training_params = metrics.get('training_params', {})
+            class_count = training_params.get('class_count') if isinstance(training_params, dict) else None
+            if class_count in (2, 3):
+                return int(class_count)
+
+            classes = metrics.get('classes')
+            if isinstance(classes, list) and len(classes) in (2, 3):
+                return len(classes)
+    except Exception as e:
+        logging.error(f"Failed to read class_count for active local model {version}: {e}")
+
+    return default
 
 
 def set_active_model(scope, version_name):
@@ -391,6 +420,77 @@ logging.info('Application started.')
 # Initialize global interpreter and a lock for thread safety
 interpreter = None
 model_lock = threading.Lock()
+db_lock = threading.Lock()
+
+
+def init_db():
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inference_log (
+                    hash TEXT PRIMARY KEY,
+                    timestamp TEXT,
+                    esp32_model TEXT,
+                    server_model TEXT,
+                    esp32_inference TEXT,
+                    server_inference TEXT,
+                    server_simple_inference TEXT,
+                    true_label TEXT,
+                    esp32_confidence REAL,
+                    server_confidence REAL
+                );
+                """
+            )
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Failed to initialize database: {e}")
+
+
+def fnv1a_32(data: bytes) -> int:
+    FNV_OFFSET_BASIS = 2166136261
+    FNV_PRIME = 16777619
+    h = FNV_OFFSET_BASIS
+    for b in data:
+        h ^= b
+        h = (h * FNV_PRIME) & 0xFFFFFFFF  # keep 32-bit
+    return h
+
+
+def hash_to_name(data: bytes) -> str:
+    return f"{fnv1a_32(data):08X}"
+
+
+def upsert_inference_record(hash_hex, *, timestamp, esp32_model=None, server_model=None,
+                            esp32_inference=None, server_inference=None, server_simple_inference=None,
+                            true_label=None, esp32_confidence=None, server_confidence=None):
+    try:
+        with db_lock, sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """
+                INSERT INTO inference_log (
+                    hash, timestamp, esp32_model, server_model,
+                    esp32_inference, server_inference, server_simple_inference, true_label,
+                    esp32_confidence, server_confidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(hash) DO UPDATE SET
+                    timestamp=excluded.timestamp,
+                    esp32_model=excluded.esp32_model,
+                    server_model=excluded.server_model,
+                    esp32_inference=excluded.esp32_inference,
+                    server_inference=excluded.server_inference,
+                    server_simple_inference=excluded.server_simple_inference,
+                    true_label=excluded.true_label,
+                    esp32_confidence=excluded.esp32_confidence,
+                    server_confidence=excluded.server_confidence;
+                """,
+                [hash_hex, timestamp, esp32_model, server_model,
+                 esp32_inference, server_inference, server_simple_inference, true_label,
+                 esp32_confidence, server_confidence]
+            )
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Failed to upsert inference_log for hash {hash_hex}: {e}")
 
 
 def read_json_file(path, default=None):
@@ -435,6 +535,9 @@ if not OFFLINE_MODE and PY_CORAL_AVAILABLE:
 else:
     logging.info("Application running in offline mode; Edge TPU inference disabled.")
 
+# Initialize database on startup
+init_db()
+
 # Classes mapping
 CLASSES = ['not_cat', 'unknown_cat_entering', 'cat_morris_leaving', 'cat_morris_entering', 'prey']
 IMG_SIZE = (224, 224)
@@ -464,7 +567,7 @@ def mqtt_on_message(client, userdata, msg):
         initial_connection = False
 
     try:
-        image_data = msg.payload;
+        image_data = msg.payload
         # Generate timestamped filename
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         image_filename = f"{timestamp}.jpg"
@@ -477,7 +580,7 @@ def mqtt_on_message(client, userdata, msg):
         print(f"Image saved to {image_path}")
 
         # Classify the image
-        predicted_class = classify_image(image_path)
+        predicted_class, server_confidence = classify_image(image_path)
         predicted_label = CLASSES[predicted_class]
 
         end = time.time()
@@ -492,7 +595,6 @@ def mqtt_on_message(client, userdata, msg):
 
         if predicted_label == 'not_cat':
             labels['cat'] = False
-            logging.warning('Empty picture received?')
         elif predicted_label == 'cat_morris_entering':
             labels['cat'] = True
             labels['morris'] = True
@@ -516,8 +618,27 @@ def mqtt_on_message(client, userdata, msg):
         # Publish server inference result (for comparison with ESP32)
         client.publish('catflap/inference', predicted_label)
         
-        # Simplify server result for comparison (prey vs not_prey)
-        server_simple = "prey" if predicted_label == "prey" else "not_prey"
+        # Hash the raw image bytes as primary key for DB logging
+        img_hash = hash_to_name(image_data)
+        active_models = get_active_models()
+        local_class_count = get_active_local_class_count()
+        if predicted_label == "prey":
+            server_simple = "prey"
+        elif local_class_count == 3 and predicted_label == "not_cat":
+            server_simple = "not_cat"
+        else:
+            server_simple = "not_prey"
+        server_model_name = active_models.get('server') if isinstance(active_models, dict) else None
+        timestamp_iso = datetime.datetime.now(datetime.timezone.utc).isoformat() + 'Z'
+        upsert_inference_record(
+            img_hash,
+            timestamp=timestamp_iso,
+            server_model=server_model_name,
+            server_inference=predicted_label,
+            server_simple_inference=server_simple,
+            server_confidence=server_confidence,
+        )
+
         client.publish('catflap/server_inference', server_simple)
         
         # Write labels to EXIF
@@ -625,7 +746,7 @@ def classify_image(image_path):
         
         if OFFLINE_MODE or not interpreter or not PY_CORAL_AVAILABLE:
             logging.debug("Offline mode - returning default classification")
-            return 0
+            return 0, None
 
         with model_lock:
             # Set the input tensor
@@ -637,12 +758,13 @@ def classify_image(image_path):
             # Get the results
             results = get_classes(interpreter, top_k=1)
             predicted_class = results[0].id  # Get the class index
+            predicted_score = getattr(results[0], 'score', None)
 
-        return predicted_class
+        return predicted_class, predicted_score
     except Exception as e:
         print(f"Error classifying image {image_path}: {e}")
         logging.error(f"Error classifying image {image_path}: {e}")
-        return 0  # Default to 'not_cat' in case of error
+        return 0, None  # Default to 'not_cat' in case of error
 
 retrain_lock = threading.Lock()
 
