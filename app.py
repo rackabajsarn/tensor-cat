@@ -816,7 +816,13 @@ def mqtt_on_message(client, userdata, msg):
             server_confidence=server_confidence,
         )
 
-        client.publish('catflap/server_inference', server_simple)
+        server_payload = json.dumps({
+            "hash": img_hash,
+            "label": server_simple,
+            "confidence": float(server_confidence) if server_confidence is not None else None,
+            "model": server_model_name or ""
+        })
+        client.publish('catflap/server_inference', server_payload)
         
         # Write labels to EXIF
         write_labels(image_path, labels)
