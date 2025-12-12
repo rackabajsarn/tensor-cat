@@ -833,7 +833,7 @@ def mqtt_on_message(client, userdata, msg):
         })
         client.publish('catflap/server_inference', server_payload)
         
-        # Write labels to EXIF
+        # Write labels to EXIF and ensure hash persists for later true-label logging
         write_labels(image_path, labels)
         write_imghash(image_path, img_hash)
         
@@ -1565,21 +1565,20 @@ def update_label():
         success = write_labels(image_path, labels)
 
         if success:
-            # When labeling gallery images, record true_label using simple class mapping.
-            if mode == 'gallery':
-                img_hash = read_imghash(image_path)
-                if img_hash:
-                    class_count = get_active_local_class_count()
-                    simple_true = compute_simple_class(class_count, labels=labels)
-                    try:
-                        upsert_inference_record(
-                            img_hash,
-                            true_label=simple_true,
-                        )
-                    except Exception as log_err:
-                        logging.error(f"Failed to upsert true_label for {img_hash}: {log_err}")
-                else:
-                    logging.warning(f"No EXIF hash found for {image_path}; skipping true_label upsert")
+            # When labeling images, record true_label using simple class mapping (both classify and gallery modes).
+            img_hash = read_imghash(image_path)
+            if img_hash:
+                class_count = get_active_local_class_count()
+                simple_true = compute_simple_class(class_count, labels=labels)
+                try:
+                    upsert_inference_record(
+                        img_hash,
+                        true_label=simple_true,
+                    )
+                except Exception as log_err:
+                    logging.error(f"Failed to upsert true_label for {img_hash}: {log_err}")
+            else:
+                logging.warning(f"No EXIF hash found for {image_path}; skipping true_label upsert")
 
             return jsonify({'success': True, 'labels': labels})
         else:

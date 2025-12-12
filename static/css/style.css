@@ -643,7 +643,7 @@ body.dark-theme .panel-meta {
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 24px;
     margin-bottom: 25px;
-    align-items: end;
+    align-items: baseline;
 }
 
 .training-form .form-field {
