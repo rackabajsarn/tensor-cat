@@ -272,104 +272,144 @@
         const liveCM = metricsPayload.live_cm || [];
         const liveLabels = metricsPayload.live_classes || [];
 
-        if (curves && (curves.accuracy || curves.val_accuracy)) {
-            const ctxAcc = document.getElementById('accuracyChart');
-            if (ctxAcc) {
-                const accData = curves.accuracy || [];
-                const valAccData = curves.val_accuracy || [];
-                const labels = accData.length >= valAccData.length
-                    ? accData.map((_, i) => i + 1)
-                    : valAccData.map((_, i) => i + 1);
+        // Register datalabels once; avoid re-registering per chart.
+        Chart.register(ChartDataLabels);
 
-                new Chart(ctxAcc, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [
-                            {
-                                label: 'Training Accuracy',
-                                data: accData,
-                                borderColor: 'rgba(54, 162, 235, 1)',
-                                backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                                tension: 0.15,
+        const buildLineChart = (canvasId, labels, datasets) => {
+            const el = document.getElementById(canvasId);
+            if (!el) return;
+
+            if (el._chartInstance) {
+                el._chartInstance.destroy();
+            }
+
+            el._chartInstance = new Chart(el, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets,
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: datasets.length > 1 },
+                        tooltip: {
+                            callbacks: {
+                                label: function(item) {
+                                    const val = item.parsed.y;
+                                    return `${item.dataset.label}: ${val.toFixed(3)}`;
+                                },
                             },
-                            {
-                                label: 'Validation Accuracy',
-                                data: valAccData,
-                                borderColor: 'rgba(75, 192, 192, 1)',
-                                backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                                tension: 0.15,
-                            },
-                        ],
+                        },
+                        datalabels: false,
                     },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            x: { title: { display: true, text: 'Epoch' } },
-                            y: { title: { display: true, text: 'Accuracy' }, min: 0, max: 1 },
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Epoch' },
+                            ticks: { color: '#d5d5d5' },
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: '#d5d5d5' },
+                            grid: { color: 'rgba(255,255,255,0.1)' },
                         },
                     },
+                },
+            });
+        };
+
+        // Accuracy chart
+        const acc = curves.accuracy || [];
+        const valAcc = curves.val_accuracy || [];
+        const maxEpochsAcc = Math.max(acc.length, valAcc.length);
+        if (maxEpochsAcc > 0) {
+            const epochLabels = Array.from({ length: maxEpochsAcc }, (_, i) => i + 1);
+            const datasets = [];
+            if (acc.length) {
+                datasets.push({
+                    label: 'Accuracy',
+                    data: acc,
+                    borderColor: 'rgba(46, 204, 113, 0.9)',
+                    backgroundColor: 'rgba(46, 204, 113, 0.25)',
+                    tension: 0.25,
+                    fill: true,
                 });
             }
-        }
-
-        if (curves && (curves.loss || curves.val_loss)) {
-            const ctxLoss = document.getElementById('lossChart');
-            if (ctxLoss) {
-                const lossData = curves.loss || [];
-                const valLossData = curves.val_loss || [];
-                const labels = lossData.length >= valLossData.length
-                    ? lossData.map((_, i) => i + 1)
-                    : valLossData.map((_, i) => i + 1);
-
-                new Chart(ctxLoss, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [
-                            {
-                                label: 'Training Loss',
-                                data: lossData,
-                                borderColor: 'rgba(255, 99, 132, 1)',
-                                backgroundColor: 'rgba(255, 99, 132, 0.2)',
-                                tension: 0.15,
-                            },
-                            {
-                                label: 'Validation Loss',
-                                data: valLossData,
-                                borderColor: 'rgba(255, 159, 64, 1)',
-                                backgroundColor: 'rgba(255, 159, 64, 0.2)',
-                                tension: 0.15,
-                            },
-                        ],
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            x: { title: { display: true, text: 'Epoch' } },
-                            y: { title: { display: true, text: 'Loss' }, min: 0 },
-                        },
-                    },
+            if (valAcc.length) {
+                datasets.push({
+                    label: 'Val Accuracy',
+                    data: valAcc,
+                    borderColor: 'rgba(52, 152, 219, 0.9)',
+                    backgroundColor: 'rgba(52, 152, 219, 0.25)',
+                    tension: 0.25,
+                    fill: true,
                 });
             }
+            buildLineChart('accuracyChart', epochLabels, datasets);
         }
 
-        // Confusion matrix heatmap (square matrix of counts)
+        // Loss chart
+        const loss = curves.loss || [];
+        const valLoss = curves.val_loss || [];
+        const maxEpochsLoss = Math.max(loss.length, valLoss.length);
+        if (maxEpochsLoss > 0) {
+            const epochLabels = Array.from({ length: maxEpochsLoss }, (_, i) => i + 1);
+            const datasets = [];
+            if (loss.length) {
+                datasets.push({
+                    label: 'Loss',
+                    data: loss,
+                    borderColor: 'rgba(231, 76, 60, 0.9)',
+                    backgroundColor: 'rgba(231, 76, 60, 0.25)',
+                    tension: 0.25,
+                    fill: true,
+                });
+            }
+            if (valLoss.length) {
+                datasets.push({
+                    label: 'Val Loss',
+                    data: valLoss,
+                    borderColor: 'rgba(155, 89, 182, 0.9)',
+                    backgroundColor: 'rgba(155, 89, 182, 0.25)',
+                    tension: 0.25,
+                    fill: true,
+                });
+            }
+            buildLineChart('lossChart', epochLabels, datasets);
+        }
+
+        const truncateLabel = (label, maxLen = 11) => {
+            if (typeof label !== 'string') return label;
+            return label.length > maxLen ? label.slice(0, maxLen - 3) + '...' : label;
+        };
+
+        const ensureLabels = (arr, fallbackLen) => {
+            if (Array.isArray(arr) && arr.length) return arr;
+            const len = fallbackLen && fallbackLen > 0 ? fallbackLen : 1;
+            return Array.from({ length: len }, () => '');
+        };
+
         if (cmData && cmData.length && cmData[0].length) {
+            const cmLabelsSafe = ensureLabels(cmLabels, cmData[0].length);
             const ctxCM = document.getElementById('confusionMatrixChart');
             if (ctxCM) {
+                // destroy any previous instance to avoid plugin state leakage
+                if (ctxCM._cmChartInstance) {
+                    ctxCM._cmChartInstance.destroy();
+                }
+
                 const flatValues = cmData.flat();
                 const maxVal = flatValues.reduce((m, v) => Math.max(m, v), 0) || 1;
 
                 const matrixData = cmData.flatMap((row, i) =>
                     row.map((v, j) => ({ x: j, y: i, v }))
                 );
-                Chart.register(ChartDataLabels);
-                new Chart(ctxCM, {
+                ctxCM._cmChartInstance = new Chart(ctxCM, {
                     type: 'matrix',
                     data: {
+                        labels: cmLabelsSafe,
                         datasets: [
                             {
                                 label: 'Confusion Matrix',
@@ -408,8 +448,8 @@
                                         var item = items[0];
                                         var i = item.raw.y;
                                         var j = item.raw.x;
-                                        var trueLabel = cmLabels[i] || ('True ' + i);
-                                        var predLabel = cmLabels[j] || ('Pred ' + j);
+                                        var trueLabel = cmLabelsSafe[i] || ('True ' + i);
+                                        var predLabel = cmLabelsSafe[j] || ('Pred ' + j);
                                         return trueLabel + ' → ' + predLabel;
                                     },
                                     label: function(item) {
@@ -428,25 +468,40 @@
                         scales: {
                             x: {
                                 type: 'linear',
-                                position: 'top',
+                                position: 'bottom',
                                 min: -0.5,
                                 max: cmData[0].length - 0.5,
                                 offset: false,
                                 ticks: {
-                                    callback: function(v) { return cmLabels[v] || v; },
+                                    callback: function(v) {
+                                        return Number.isInteger(v) ? truncateLabel(cmLabelsSafe[v] || '') : '';
+                                    },
                                     stepSize: 1,
+                                    autoSkip: false,
+                                    maxRotation: 0,
+                                    minRotation: 0,
+                                    color: '#d5d5d5',
+                                    padding: 6,
                                 },
                                 grid: { display: false },
                             },
                             y: {
                                 type: 'linear',
                                 reverse: true,
+                                position: 'left',
                                 min: -0.5,
                                 max: cmData.length - 0.5,
                                 offset: false,
                                 ticks: {
-                                    callback: function(v) { return cmLabels[v] || v; },
+                                    callback: function(v) {
+                                        return Number.isInteger(v) ? truncateLabel(cmLabelsSafe[v] || '') : '';
+                                    },
                                     stepSize: 1,
+                                    autoSkip: false,
+                                    maxRotation: 0,
+                                    minRotation: 0,
+                                    color: '#d5d5d5',
+                                    padding: 6,
                                 },
                                 grid: { display: false },
                             },
@@ -456,16 +511,22 @@
             }
         }
 
+        // Live (empirical) confusion matrix
         if (liveCM && liveCM.length && liveCM[0].length) {
+            const liveLabelsSafe = ensureLabels(liveLabels, liveCM[0].length);
             const ctxLive = document.getElementById('confusionMatrixLive');
             if (ctxLive) {
+                if (ctxLive._cmChartInstance) {
+                    ctxLive._cmChartInstance.destroy();
+                }
+
                 const flatValues = liveCM.flat();
                 const maxVal = flatValues.reduce((m, v) => Math.max(m, v), 0) || 1;
                 const matrixData = liveCM.flatMap((row, i) => row.map((v, j) => ({ x: j, y: i, v })));
-                Chart.register(ChartDataLabels);
-                new Chart(ctxLive, {
+                ctxLive._cmChartInstance = new Chart(ctxLive, {
                     type: 'matrix',
                     data: {
+                        labels: liveLabelsSafe,
                         datasets: [
                             {
                                 label: 'Accumulated Confusion',
@@ -504,8 +565,8 @@
                                         var item = items[0];
                                         var i = item.raw.y;
                                         var j = item.raw.x;
-                                        var trueLabel = liveLabels[i] || ('True ' + i);
-                                        var predLabel = liveLabels[j] || ('Pred ' + j);
+                                        var trueLabel = liveLabelsSafe[i] || ('True ' + i);
+                                        var predLabel = liveLabelsSafe[j] || ('Pred ' + j);
                                         return trueLabel + ' → ' + predLabel;
                                     },
                                     label: function(item) {
@@ -523,17 +584,44 @@
                         },
                         scales: {
                             x: {
-                                type: 'category',
-                                labels: liveLabels,
-                                position: 'top',
-                                ticks: { display: true }
+                                type: 'linear',
+                                position: 'bottom',
+                                min: -0.5,
+                                max: liveCM[0].length - 0.5,
+                                offset: false,
+                                ticks: {
+                                    display: true,
+                                    callback: function(v) {
+                                        return Number.isInteger(v) ? truncateLabel(liveLabelsSafe[v] || '') : '';
+                                    },
+                                    stepSize: 1,
+                                    autoSkip: false,
+                                    maxRotation: 0,
+                                    minRotation: 0,
+                                    color: '#d5d5d5',
+                                    padding: 6,
+                                },
                             },
                             y: {
-                                type: 'category',
-                                labels: liveLabels,
+                                type: 'linear',
                                 reverse: true,
-                                ticks: { display: true }
-                            }
+                                position: 'left',
+                                min: -0.5,
+                                max: liveCM.length - 0.5,
+                                offset: false,
+                                ticks: {
+                                    display: true,
+                                    callback: function(v) {
+                                        return Number.isInteger(v) ? truncateLabel(liveLabelsSafe[v] || '') : '';
+                                    },
+                                    stepSize: 1,
+                                    autoSkip: false,
+                                    maxRotation: 0,
+                                    minRotation: 0,
+                                    color: '#d5d5d5',
+                                    padding: 6,
+                                },
+                            },
                         }
                     }
                 });
