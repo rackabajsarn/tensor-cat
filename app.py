@@ -1565,7 +1565,18 @@ def update_label():
         success = write_labels(image_path, labels)
 
         if success:
-            # When labeling images, record true_label using simple class mapping (both classify and gallery modes).
+            return jsonify({'success': True, 'labels': labels})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to update labels.'}), 500
+
+    elif action == 'save':
+        # Move the image to dataset directory
+        dest_path = os.path.join(DATASET_IMAGES_DIR, filename)
+        try:
+            logging.debug("Attempting to move the image.")
+
+            # Before moving, persist true_label using current labels and hash
+            labels = read_labels(image_path)
             img_hash = read_imghash(image_path)
             if img_hash:
                 class_count = get_active_local_class_count()
@@ -1580,15 +1591,6 @@ def update_label():
             else:
                 logging.warning(f"No EXIF hash found for {image_path}; skipping true_label upsert")
 
-            return jsonify({'success': True, 'labels': labels})
-        else:
-            return jsonify({'success': False, 'message': 'Failed to update labels.'}), 500
-
-    elif action == 'save':
-        # Move the image to dataset directory
-        dest_path = os.path.join(DATASET_IMAGES_DIR, filename)
-        try:
-            logging.debug("Attempting to move the image.")
             shutil.move(image_path, dest_path)
             logging.debug(f"Image moved successfully to {dest_path}.")
 
