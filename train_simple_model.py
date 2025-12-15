@@ -10,10 +10,19 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers
 from sklearn.utils import class_weight
-from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_recall_curve, ConfusionMatrixDisplay
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
+    ConfusionMatrixDisplay,
+    roc_auc_score,
+    average_precision_score,
+    roc_curve,
+)
 import matplotlib.pyplot as plt
 import seaborn as sns
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 import argparse
 from collections import Counter
 from collections import defaultdict
@@ -32,6 +41,10 @@ parser.add_argument('--class_count', type=int, choices=[2, 3], default=2,
                     help='Number of output classes. Use 2 for [prey, not_prey] or 3 for [prey, not_prey, not_cat].')
 parser.add_argument('--prefer_recall', action='store_true',
                     help='Use the best recall checkpoint (binary only). Defaults to best accuracy.')
+parser.add_argument('--export_logit_scale', type=float, default=1.0,
+                    help='Scale logits before softmax at export/eval time (improves probability spread for quantized uint8 output).')
+parser.add_argument('--export_output', choices=['probs', 'logits_margin'], default='probs',
+                    help='Export output tensor. probs=softmax probabilities (uint8 output). logits_margin=prey_logit-not_prey_logit (int8 output). Only supported for 2-class.')
 parser.add_argument('--max_samples_per_class', type=int, default=0,
                     help='Optional cap per class for training/validation (0 = use all samples).')
 parser.add_argument('--run_id', type=str, default=None,
@@ -56,6 +69,8 @@ BATCH_SIZE = args.batch_size
 SEED = args.seed
 CLASS_COUNT = args.class_count
 PREFER_RECALL = bool(args.prefer_recall and CLASS_COUNT == 2)
+EXPORT_LOGIT_SCALE = max(1e-6, float(args.export_logit_scale))
+EXPORT_OUTPUT = str(args.export_output)
 MAX_SAMPLES_PER_CLASS = max(0, args.max_samples_per_class)
 RUN_ID = args.run_id
 WIDTH_MULT = max(0.4, float(args.width_mult))  # clamp to avoid degenerate shapes
@@ -87,6 +102,10 @@ if CLASS_COUNT == 3:
     CLASSES = ['prey', 'not_prey', 'not_cat']
 else:
     CLASSES = ['prey', 'not_prey']
+
+if CLASS_COUNT != 2 and EXPORT_OUTPUT != 'probs':
+    print("Warning: --export_output logits_margin only supported for 2-class; forcing probs.")
+    EXPORT_OUTPUT = 'probs'
 IMG_SIZE = (96, 96)
 
 class ProgressCallback(tf.keras.callbacks.Callback):
@@ -121,6 +140,27 @@ def load_dataset(dataset_dir):
             image_paths.append(image_path)
             labels_list.append(labels)
     return image_paths, labels_list
+
+
+def filter_excluded_samples(image_paths, labels_list):
+    """Exclude samples we don't want the simple model to learn.
+
+    Currently drops "cat_morris_leaving" frames (cat=True, morris=True, entering=False),
+    since those will be handled by an ESP-side heuristic.
+    """
+    kept_paths = []
+    kept_labels = []
+    excluded = 0
+    for p, labels in zip(image_paths, labels_list):
+        is_cat = bool(labels.get('cat', False))
+        is_morris = bool(labels.get('morris', False))
+        is_entering = bool(labels.get('entering', False))
+        if is_cat and is_morris and (not is_entering):
+            excluded += 1
+            continue
+        kept_paths.append(p)
+        kept_labels.append(labels)
+    return kept_paths, kept_labels, excluded
 
 def convert_labels(labels_list):
     labels_encoded = []
@@ -165,13 +205,32 @@ def limit_samples_per_class(image_paths, labels_encoded, max_per_class, seed=0):
 def preprocess_image(image_path, label):
     image = tf.io.read_file(image_path)
     image = tf.image.decode_jpeg(image, channels=1)  # grayscale
-    # square center crop
+    # Resolution-dependent center crop to match how datasets were captured:
+    # - legacy 640x480 images used a 384x384 center crop
+    # - new 320x240 images use a 192x192 center crop
+    # Then resize to 96x96 (nearest) like the ESP32 local model input.
+    image = tf.cast(image, tf.uint8)
+
     h = tf.shape(image)[0]
     w = tf.shape(image)[1]
-    shorter_side = tf.minimum(h, w)
-    image = tf.image.resize_with_crop_or_pad(image, shorter_side, shorter_side)
-    image = tf.image.resize_with_crop_or_pad(image, 384, 384)
+    min_dim = tf.minimum(h, w)
+
+    desired_crop = tf.where(
+        min_dim >= 480,
+        tf.constant(384, dtype=min_dim.dtype),
+        tf.where(
+            min_dim >= 240,
+            tf.constant(192, dtype=min_dim.dtype),
+            min_dim,
+        ),
+    )
+    crop_size = tf.minimum(desired_crop, min_dim)
+
+    offset_y = (h - crop_size) // 2
+    offset_x = (w - crop_size) // 2
+    image = tf.image.crop_to_bounding_box(image, offset_y, offset_x, crop_size, crop_size)
     image = tf.image.resize(image, IMG_SIZE, method='nearest')
+    image = tf.cast(image, tf.uint8)
     # keep dtype uint8; Rescaling layer will scale to 0..1
     return image, label
 
@@ -199,19 +258,64 @@ def preprocess_image_val(image_path, label):
 
 # Representative dataset for INT8: feed uint8 in [0..255]
 def representative_data_gen():
-    # Group by label
-    class_to_images = defaultdict(list)
-    for path, label in zip(image_paths, labels_encoded):
-        class_to_images[label].append(path)
+    # Keep this self-contained so importing the module works.
+    # For quantization stability, stratify the representative set across
+    # brightness (day/night/IR) while reusing the exact preprocess pipeline.
+    rep_bins = 6
+    rep_per_cell = 10  # per (label, brightness bin)
+    rng = random.Random(SEED)
+
+    def _fast_mean_u8(path: str) -> float | None:
+        """Fast approximate brightness for binning (0..255).
+
+        Using PIL here is *much* faster than running the full TF preprocess
+        for every image during TFLite conversion.
+        """
+        try:
+            with Image.open(path) as img:
+                img = img.convert('L')
+                img = img.resize((32, 32))
+                arr = np.asarray(img, dtype=np.uint8)
+                return float(arr.mean())
+        except Exception:
+            return None
+
+    image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
+    # Apply the same exclusions as training so calibration matches the task.
+    image_paths, labels_list, _excluded = filter_excluded_samples(image_paths, labels_list)
+    labels_encoded = convert_labels(labels_list)
+
+    # Bucket by (label, brightness_bin)
+    buckets = defaultdict(list)
+    bin_counts = [0] * rep_bins
+    for idx, (path, label) in enumerate(zip(image_paths, labels_encoded)):
+        mean_u8 = _fast_mean_u8(path)
+        if mean_u8 is None:
+            continue
+
+        bin_idx = int(mean_u8 * rep_bins / 256.0)
+        bin_idx = max(0, min(rep_bins - 1, bin_idx))
+        bin_counts[bin_idx] += 1
+        buckets[(int(label), bin_idx)].append(path)
+
+        # Light progress output so long conversions don't look stuck.
+        if (idx + 1) % 200 == 0:
+            print(f"Representative scan: {idx + 1}/{len(image_paths)}", flush=True)
 
     sampled_paths = []
-    for images in class_to_images.values():
-        sampled_paths.extend(random.sample(images, min(len(images), 20)))
+    for (label, bin_idx), paths in buckets.items():
+        rng.shuffle(paths)
+        sampled_paths.extend(paths[:min(len(paths), rep_per_cell)])
 
-    for image_path in sampled_paths[:100]:
-        img = Image.open(image_path).convert("L").resize(IMG_SIZE)
-        arr = np.array(img).astype(np.uint8)  # (96,96)
-        arr = np.expand_dims(arr, axis=-1)    # (96,96,1)
+    rng.shuffle(sampled_paths)
+    if sampled_paths:
+        # One-line debug summary during conversion.
+        print(f"Representative scan complete: {len(image_paths)} images, brightness bins={bin_counts}", flush=True)
+        print(f"Representative set: {len(sampled_paths)} samples (target per cell={rep_per_cell})", flush=True)
+
+    for image_path in sampled_paths:
+        img, _ = preprocess_image(image_path, 0)
+        arr = tf.cast(img, tf.uint8).numpy()  # (96,96,1)
         arr = np.expand_dims(arr, axis=0)     # (1,96,96,1)
         yield [arr]
 
@@ -251,8 +355,56 @@ def build_model():
 
     x = layers.GlobalAveragePooling2D()(x)
     x = layers.Dropout(DROPOUT_RATE)(x)
-    outputs = layers.Dense(len(CLASSES), activation='softmax')(x)
+    logits = layers.Dense(len(CLASSES), activation=None, name='logits')(x)
+    outputs = layers.Activation('softmax', name='probs')(logits)
     return tf.keras.Model(inputs, outputs)
+
+
+def make_export_model(
+    base_model: tf.keras.Model,
+    *,
+    export_logit_scale: float,
+    export_output: str = 'probs',
+) -> tf.keras.Model:
+    """Create an eval/export model.
+
+    Modes:
+    - probs: softmax probabilities (useful for metrics + backwards-compatible uint8 output).
+    - logits_margin: prey_logit - not_prey_logit (better for quantized output resolution).
+    """
+
+    export_output = str(export_output or 'probs')
+    if export_output not in ('probs', 'logits_margin'):
+        raise ValueError(f"Unsupported export_output: {export_output}")
+
+    if export_output == 'logits_margin' and CLASS_COUNT != 2:
+        raise ValueError("logits_margin export requires 2-class model")
+
+    try:
+        logits_tensor = base_model.get_layer('logits').output
+    except Exception as e:
+        raise RuntimeError(
+            "Model does not expose a 'logits' layer; cannot build export model. "
+            "Re-train with the updated script."
+        ) from e
+
+    scaled_logits = logits_tensor
+    if export_logit_scale is not None and abs(float(export_logit_scale) - 1.0) >= 1e-9:
+        scaled_logits = layers.Rescaling(float(export_logit_scale), offset=0.0, name='export_logit_rescale')(logits_tensor)
+
+    if export_output == 'probs':
+        probs = layers.Activation('softmax', name='probs')(scaled_logits)
+        if scaled_logits is logits_tensor:
+            return base_model
+        return tf.keras.Model(base_model.input, probs, name=f"export_probs_scaled_x{float(export_logit_scale):g}")
+
+    # logits_margin
+    prey_index = CLASSES.index('prey')
+    not_prey_index = CLASSES.index('not_prey')
+    prey_logit = scaled_logits[:, prey_index:prey_index + 1]
+    not_prey_logit = scaled_logits[:, not_prey_index:not_prey_index + 1]
+    margin = layers.Subtract(name='logits_margin')([prey_logit, not_prey_logit])
+    return tf.keras.Model(base_model.input, margin, name=f"export_logits_margin_x{float(export_logit_scale):g}")
 
 # -----------------------------
 # Training
@@ -273,6 +425,9 @@ if __name__ == '__main__':
 
     # Load dataset
     image_paths, labels_list = load_dataset(DATASET_IMAGES_DIR)
+    image_paths, labels_list, excluded = filter_excluded_samples(image_paths, labels_list)
+    if excluded:
+        print(f"Excluded {excluded} cat_morris_leaving samples from training dataset.")
     labels_encoded = convert_labels(labels_list)
 
     original_class_counts = Counter(labels_encoded)
@@ -291,6 +446,19 @@ if __name__ == '__main__':
     # Split (stratified)
     train_paths, val_paths, train_labels, val_labels = train_test_split(
         image_paths, labels_encoded, test_size=VAL_SPLIT, random_state=SEED, stratify=labels_encoded)
+
+    # Make split sizes explicit (helps catch accidental tiny validation sets)
+    try:
+        train_counts = Counter(train_labels)
+        val_counts = Counter(val_labels)
+        train_named = {CLASSES[int(k)]: int(v) for k, v in train_counts.items()}
+        val_named = {CLASSES[int(k)]: int(v) for k, v in val_counts.items()}
+        print(f"Train/val sizes: train={len(train_paths)} val={len(val_paths)} (val_split={VAL_SPLIT})")
+        print(f"Train distribution: {train_named}")
+        print(f"Val distribution:   {val_named}")
+    except Exception:
+        train_named = None
+        val_named = None
 
     # Class weights
     class_weight_dict = None
@@ -363,7 +531,12 @@ if __name__ == '__main__':
             values = [INIT_LR, INIT_LR * 0.5, INIT_LR * 0.1]
             base = tf.keras.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
         else:
-            base = lambda step: tf.constant(INIT_LR, dtype=tf.float32)
+            # Use a proper schedule object (not a Python lambda), since some
+            # Keras optimizer paths may call the LR callable with no args.
+            base = tf.keras.optimizers.schedules.PiecewiseConstantDecay(
+                boundaries=[total_steps + 1],
+                values=[INIT_LR, INIT_LR]
+            )
 
         if warmup_steps <= 0:
             return base
@@ -434,25 +607,14 @@ if __name__ == '__main__':
         verbose=2
     )
 
-    # Load preferred checkpoint from this run's versioned model directory
+    # We'll consider multiple candidates for export/evaluation:
+    # - current in-memory weights (already restored to best val_loss by EarlyStopping)
+    # - best-accuracy checkpoint
+    # - best-recall checkpoint
+    # Then choose the one that best matches our deployment objective.
     best_acc_path = os.path.join(model_dir, 'best_acc_model.keras')
     best_recall_path = os.path.join(model_dir, 'best_recall_model.keras')
-
-    checkpoint_choice = 'recall' if PREFER_RECALL else 'accuracy'
-    checkpoint_path = best_recall_path if PREFER_RECALL else best_acc_path
-
-    if not os.path.exists(checkpoint_path):
-        # Fallback to whichever checkpoint exists
-        fallback_path = best_acc_path if checkpoint_choice == 'recall' else best_recall_path
-        if os.path.exists(fallback_path):
-            checkpoint_path = fallback_path
-            checkpoint_choice = 'recall' if fallback_path == best_recall_path else 'accuracy'
-
-    if os.path.exists(checkpoint_path):
-        model = tf.keras.models.load_model(checkpoint_path)
-        print(f"Loaded best {checkpoint_choice} model from {checkpoint_path}")
-    else:
-        print("No best-checkpoint files found; continuing with current model weights.")
+    model_val_loss = model
 
     # Collect curves for metrics.json (no separate plot files)
     acc = history.history.get('accuracy', [])
@@ -463,45 +625,330 @@ if __name__ == '__main__':
     # ---------------------------------
     # Evaluation & threshold selection
     # ---------------------------------
-    # Build full val tensors for thresholding
+    # Build full val tensors for thresholding using the same preprocessing
+    # as training/device (single source of truth).
     def load_val_array(paths):
         X = []
         for p in paths:
-            img = Image.open(p).convert('L')
-            shorter = min(img.size)
-            left = (img.width - shorter)//2
-            top = (img.height - shorter)//2
-            img = img.crop((left, top, left+shorter, top+shorter))
-            img = img.resize(IMG_SIZE, Image.Resampling.LANCZOS)
-            X.append(np.array(img, dtype=np.uint8))
-        X = np.array(X)
-        X = np.expand_dims(X, -1)  # (N,96,96,1) uint8
+            img, _ = preprocess_image(p, 0)
+            X.append(tf.cast(img, tf.uint8).numpy())
+        X = np.stack(X, axis=0)  # (N,96,96,1) uint8
         return X
-    val_images = load_val_array(val_paths)
-    # If the model expects float32, scale to [0,1]. If it expects uint8, keep as-is.
-    if model.inputs[0].dtype == tf.float32:
-        val_images = val_images.astype('float32') / 255.0
-    # Predict probabilities
-    val_probs = model.predict(val_images, batch_size=BATCH_SIZE, verbose=0)
-    val_pred_labels = np.argmax(val_probs, axis=1)
-
-    # threshold for prey (binary prey vs everything else)
+    val_images_u8 = load_val_array(val_paths)
     y_true_prey = (np.array(val_labels) == prey_index).astype(int)
-    prey_probs = val_probs[:, prey_index]
+    y_true = np.asarray(y_true_prey, dtype=np.int32)
 
-    prec, rec, thr = precision_recall_curve(y_true_prey, prey_probs)
-    f1 = 2 * prec[:-1] * rec[:-1] / (prec[:-1] + rec[:-1] + 1e-9)
-    best_idx = int(np.argmax(f1)) if len(f1) > 0 else 0
-    chosen_thr = float(thr[best_idx]) if len(thr) > 0 else 0.5
-    print("Chosen prey threshold (max F1):", chosen_thr)
+    def _select_threshold(scores, y_true, *, mode: str = 'min_fp'):
+        """Return (chosen_thr, best_stats) selecting a prey threshold.
+
+        Modes:
+        - 'min_fp' (default): minimize FP, then maximize recall, prefer smaller thresholds.
+        - 'recall': maximize recall subject to an FP cap, avoiding trivial "all prey" when possible.
+        """
+        scores = np.asarray(scores, dtype=np.float32)
+        y_true = np.asarray(y_true, dtype=np.int32)
+
+        n_total = int(y_true.size)
+        n_neg = int(np.sum(y_true == 0))
+
+        base = np.unique(scores).astype(np.float32)
+        base.sort()
+        if base.size == 0:
+            return 0.0, None
+        eps = 1e-6
+        if base.size >= 2:
+            mids = ((base[:-1] + base[1:]) * 0.5).astype(np.float32)
+            thresholds = np.unique(np.concatenate((base, mids, [base[0] - eps, base[-1] + eps]))).astype(np.float32)
+        else:
+            thresholds = np.unique(np.array([base[0] - eps, base[0], base[0] + eps], dtype=np.float32))
+
+        candidates = []
+        for t in thresholds:
+            pred = scores >= t
+            fp = int(np.sum(pred & (y_true == 0)))
+            tp = int(np.sum(pred & (y_true == 1)))
+            fn = int(np.sum((~pred) & (y_true == 1)))
+            pred_pos = int(np.sum(pred))
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            candidates.append((float(t), fp, tp, fn, float(precision), float(recall), pred_pos))
+
+        if not candidates:
+            return 0.5, None
+
+        def _stats_from_tuple(item, *, fp_cap_used=None):
+            t, fp, tp, fn, precision, recall, pred_pos = item
+            return {
+                "threshold": float(t),
+                "fp": int(fp),
+                "tp": int(tp),
+                "fn": int(fn),
+                "precision": float(precision),
+                "recall": float(recall),
+                "pred_pos": int(pred_pos),
+                "pred_pos_rate": float(pred_pos / n_total) if n_total > 0 else None,
+                "mode": str(mode),
+                "fp_cap_used": int(fp_cap_used) if fp_cap_used is not None else None,
+                "n_neg": int(n_neg),
+                "n_total": int(n_total),
+            }
+
+        if mode == 'recall':
+            # Avoid the trivial "everything prey" threshold when possible.
+            non_trivial = [c for c in candidates if c[2] > 0 and c[6] < n_total]
+            if not non_trivial:
+                non_trivial = [c for c in candidates if c[2] > 0]
+
+            # Start with a conservative FP cap and relax if needed.
+            caps = [0.15, 0.25, 0.5, 1.0]
+            for frac in caps:
+                fp_cap = int(round(n_neg * frac))
+                pool = [c for c in non_trivial if c[1] <= fp_cap]
+                if not pool:
+                    continue
+                # Max recall, then fewer FP, then fewer predicted positives, then higher threshold.
+                pool_sorted = sorted(pool, key=lambda c: (-c[5], c[1], c[6], -c[0]))
+                best_item = pool_sorted[0]
+                stats = _stats_from_tuple(best_item, fp_cap_used=fp_cap)
+                return float(stats["threshold"]), stats
+
+            # Fallback: best recall overall, but still prefer fewer FP and fewer predicted positives.
+            pool_sorted = sorted(non_trivial, key=lambda c: (-c[5], c[1], c[6], -c[0])) if non_trivial else sorted(candidates, key=lambda c: (-c[5], c[1], c[6], -c[0]))
+            best_item = pool_sorted[0]
+            stats = _stats_from_tuple(best_item)
+            return float(stats["threshold"]), stats
+
+        # Default: minimize FP, but require TP>0 when possible to avoid all-not_prey.
+        candidates_with_tp = [c for c in candidates if c[2] > 0]
+        if candidates_with_tp:
+            min_fp = min(c[1] for c in candidates_with_tp)
+            pool = [c for c in candidates_with_tp if c[1] == min_fp]
+        else:
+            min_fp = min(c[1] for c in candidates)
+            pool = [c for c in candidates if c[1] == min_fp]
+
+        # Within the chosen FP group: maximize recall then prefer smaller thresholds.
+        pool_sorted = sorted(pool, key=lambda c: (-c[5], c[0]))
+        best_item = pool_sorted[0]
+        stats = _stats_from_tuple(best_item, fp_cap_used=min_fp)
+        return float(stats["threshold"]), stats
+
+    def _eval_candidate(candidate_model, name):
+        # Always evaluate selection metrics in probability-space.
+        candidate_export_model = make_export_model(
+            candidate_model,
+            export_logit_scale=EXPORT_LOGIT_SCALE,
+            export_output='probs',
+        )
+
+        x = val_images_u8
+        if candidate_export_model.inputs[0].dtype == tf.float32:
+            x = x.astype('float32') / 255.0
+
+        probs_all = candidate_export_model.predict(x, batch_size=BATCH_SIZE, verbose=0)
+        prey_probs = np.asarray(probs_all[:, prey_index], dtype=np.float32)
+        chosen_thr, stats = _select_threshold(prey_probs, y_true, mode=('recall' if PREFER_RECALL else 'min_fp'))
+
+        if CLASS_COUNT == 2:
+            not_prey_index = CLASSES.index('not_prey')
+            pred_labels_used = np.where(prey_probs >= chosen_thr, prey_index, not_prey_index).astype(int)
+            cm_used = confusion_matrix(val_labels, pred_labels_used, labels=[0, 1])
+        else:
+            pred_labels_used = np.argmax(probs_all, axis=1)
+            cm_used = confusion_matrix(val_labels, pred_labels_used, labels=list(range(len(CLASSES))))
+
+        fp = int(stats["fp"]) if stats else 0
+        tp = int(stats["tp"]) if stats else 0
+        fn = int(stats["fn"]) if stats else 0
+        recall = float(stats["recall"]) if stats else 0.0
+        pred_pos = int(stats.get("pred_pos")) if isinstance(stats, dict) and stats.get("pred_pos") is not None else 0
+        has_tp = tp > 0
+        if PREFER_RECALL:
+            # Prefer any model that yields at least one TP. Then maximize recall under FP cap.
+            key = (0 if has_tp else 1, -recall, fp, pred_pos, float(chosen_thr))
+        else:
+            # Prefer any model that yields at least one TP. Then minimize FP, maximize recall.
+            key = (0 if has_tp else 1, fp, -recall, -tp, float(chosen_thr))
+        return {
+            "name": str(name),
+            "key": key,
+            "threshold": float(chosen_thr),
+            "stats": stats,
+            "cm": cm_used,
+            "probs": probs_all,
+        }
+
+    # Build candidate list.
+    candidates = []
+    candidates.append((model_val_loss, 'val_loss'))
+    if os.path.exists(best_acc_path):
+        try:
+            candidates.append((tf.keras.models.load_model(best_acc_path), 'accuracy'))
+        except Exception as e:
+            print(f"Warning: failed to load accuracy checkpoint: {e}")
+    if os.path.exists(best_recall_path):
+        try:
+            candidates.append((tf.keras.models.load_model(best_recall_path), 'recall'))
+        except Exception as e:
+            print(f"Warning: failed to load recall checkpoint: {e}")
+
+    # If user explicitly requested recall, honor that (with fallback).
+    selected = None
+    if PREFER_RECALL:
+        for m_cand, name in candidates:
+            if name == 'recall':
+                selected = _eval_candidate(m_cand, name)
+                model = m_cand
+                break
+
+    # Otherwise, choose the best candidate based on our objective.
+    if selected is None:
+        evaluated = []
+        for m_cand, name in candidates:
+            try:
+                evaluated.append(_eval_candidate(m_cand, name))
+            except Exception as e:
+                print(f"Warning: failed to evaluate candidate '{name}': {e}")
+
+        if evaluated:
+            selected = sorted(evaluated, key=lambda d: d['key'])[0]
+            chosen_name = selected['name']
+            # pick the corresponding model instance
+            for m_cand, name in candidates:
+                if name == chosen_name:
+                    model = m_cand
+                    break
+
+    # If evaluation failed for some reason, fall back to val_loss weights.
+    if selected is None:
+        model = model_val_loss
+        selected = _eval_candidate(model, 'val_loss')
+
+    checkpoint_choice = selected['name']
+    val_probs = selected['probs']
+    val_pred_labels = np.argmax(val_probs, axis=1)
+    chosen_thr = float(selected['threshold'])
+    best_stats = selected['stats']
+    cm = selected['cm']
+    export_model = make_export_model(model, export_logit_scale=EXPORT_LOGIT_SCALE, export_output=EXPORT_OUTPUT)
+
+    print(
+        f"Selected model for export: {checkpoint_choice} | prey_threshold={chosen_thr} | "
+        f"fp={best_stats['fp'] if best_stats else 'n/a'} tp={best_stats['tp'] if best_stats else 'n/a'} fn={best_stats['fn'] if best_stats else 'n/a'}"
+    )
 
     # For binary runs, also build thresholded predictions that match ESP usage
     if CLASS_COUNT == 2:
-        # prey=1, not_prey=0 using the chosen threshold
-        val_pred_used = (prey_probs >= chosen_thr).astype(int)
+        not_prey_index = CLASSES.index('not_prey')
+        prey_probs = np.asarray(val_probs[:, prey_index], dtype=np.float32)
+
+        # Majority baseline (useful when val_accuracy looks "stuck")
+        try:
+            _val_counts = Counter(val_labels)
+            _total = int(len(val_labels))
+            _maj = int(max(_val_counts.values())) if _val_counts else 0
+            majority_baseline_accuracy = float(_maj / _total) if _total > 0 else None
+        except Exception:
+            majority_baseline_accuracy = None
+
+        # Helpful diagnostics: if these distributions overlap heavily, any low-FP threshold
+        # will necessarily have poor recall.
+        try:
+            pos = prey_probs[y_true == 1]
+            neg = prey_probs[y_true == 0]
+
+            def _q(a, q):
+                return float(np.quantile(a, q)) if a.size else None
+
+            prey_prob_summary = {
+                "pos": {
+                    "n": int(pos.size),
+                    "min": float(np.min(pos)) if pos.size else None,
+                    "p50": _q(pos, 0.50),
+                    "p90": _q(pos, 0.90),
+                    "max": float(np.max(pos)) if pos.size else None,
+                },
+                "neg": {
+                    "n": int(neg.size),
+                    "min": float(np.min(neg)) if neg.size else None,
+                    "p50": _q(neg, 0.50),
+                    "p90": _q(neg, 0.90),
+                    "max": float(np.max(neg)) if neg.size else None,
+                },
+            }
+
+            print(
+                "Val prey_prob summary | "
+                f"pos(n={prey_prob_summary['pos']['n']} p50={prey_prob_summary['pos']['p50']} p90={prey_prob_summary['pos']['p90']} max={prey_prob_summary['pos']['max']}) "
+                f"neg(n={prey_prob_summary['neg']['n']} p50={prey_prob_summary['neg']['p50']} p90={prey_prob_summary['neg']['p90']} max={prey_prob_summary['neg']['max']})"
+            )
+
+            # Scalar diagnostics
+            try:
+                roc_auc = float(roc_auc_score(y_true, prey_probs)) if (pos.size and neg.size) else None
+            except Exception:
+                roc_auc = None
+            try:
+                pr_auc = float(average_precision_score(y_true, prey_probs)) if (pos.size and neg.size) else None
+            except Exception:
+                pr_auc = None
+
+            # Plot diagnostics (saved under reports/images)
+            try:
+                # Probability histogram
+                plt.figure(figsize=(6, 4))
+                bins = 30
+                plt.hist(neg, bins=bins, alpha=0.65, label='not_prey', density=True)
+                plt.hist(pos, bins=bins, alpha=0.65, label='prey', density=True)
+                plt.axvline(chosen_thr, color='k', linestyle='--', linewidth=1, label=f'thr={chosen_thr:.3f}')
+                plt.title('Validation prey probability distribution')
+                plt.xlabel('P(prey)')
+                plt.ylabel('Density')
+                plt.legend(loc='best')
+                plt.tight_layout()
+                plt.savefig(os.path.join(images_dir, 'val_prey_prob_hist.png'))
+                plt.close()
+
+                # ROC + PR curves
+                if pos.size and neg.size:
+                    fpr, tpr, _ = roc_curve(y_true, prey_probs)
+                    pr_precision, pr_recall, _ = precision_recall_curve(y_true, prey_probs)
+
+                    plt.figure(figsize=(10, 4))
+
+                    plt.subplot(1, 2, 1)
+                    plt.plot(fpr, tpr, label=f'ROC AUC={roc_auc:.3f}' if roc_auc is not None else 'ROC')
+                    plt.plot([0, 1], [0, 1], linestyle='--', color='gray', linewidth=1)
+                    plt.xlabel('False Positive Rate')
+                    plt.ylabel('True Positive Rate')
+                    plt.title('ROC curve')
+                    plt.legend(loc='lower right')
+
+                    plt.subplot(1, 2, 2)
+                    plt.plot(pr_recall, pr_precision, label=f'PR AUC={pr_auc:.3f}' if pr_auc is not None else 'PR')
+                    plt.xlabel('Recall')
+                    plt.ylabel('Precision')
+                    plt.title('Precision-Recall curve')
+                    plt.legend(loc='lower left')
+
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(images_dir, 'val_prey_prob_curves.png'))
+                    plt.close()
+            except Exception as e:
+                print(f"Warning: failed to write probability diagnostic plots: {e}")
+        except Exception:
+            prey_prob_summary = None
+            roc_auc = None
+            pr_auc = None
+            majority_baseline_accuracy = None
+
+        val_pred_used = np.where(prey_probs >= chosen_thr, prey_index, not_prey_index).astype(int)
         label_indices = [0, 1]
     else:
-        # For 3-class, fall back to standard argmax multiclass predictions
+        prey_prob_summary = None
+        roc_auc = None
+        pr_auc = None
+        majority_baseline_accuracy = None
         val_pred_used = val_pred_labels
         label_indices = list(range(len(CLASSES)))
 
@@ -523,6 +970,14 @@ if __name__ == '__main__':
     )
 
     # Prepare training/eval parameters for the report
+    def _prob_to_logit_margin(p: float) -> float:
+        try:
+            p = float(p)
+        except Exception:
+            p = 0.5
+        p = min(max(p, 1e-6), 1.0 - 1e-6)
+        return float(np.log(p / (1.0 - p)))
+
     report_params = {
         "epochs": EPOCHS,
         "learning_rate": INIT_LR,
@@ -530,6 +985,10 @@ if __name__ == '__main__':
         "seed": SEED,
         "class_count": CLASS_COUNT,
         "max_samples_per_class": MAX_SAMPLES_PER_CLASS,
+        "train_size": len(train_paths),
+        "val_size": len(val_paths),
+        "train_distribution": train_named,
+        "val_distribution": val_named,
         "width_mult": WIDTH_MULT,
         "dropout_rate": DROPOUT_RATE,
         "val_split": VAL_SPLIT,
@@ -540,11 +999,21 @@ if __name__ == '__main__':
         "label_smoothing": LABEL_SMOOTHING,
         "lr_schedule": LR_SCHEDULE,
         "warmup_epochs": WARMUP_EPOCHS,
+        "export_logit_scale": float(EXPORT_LOGIT_SCALE),
+        "export_output": str(EXPORT_OUTPUT),
         "checkpoint_choice": checkpoint_choice,
         "prey_threshold": chosen_thr,
+        "prey_logit_margin_threshold": _prob_to_logit_margin(chosen_thr) if CLASS_COUNT == 2 else None,
+        "prey_threshold_stats": best_stats,
+        "val_prey_prob_summary": prey_prob_summary,
+        "val_majority_baseline_accuracy": majority_baseline_accuracy,
+        "val_roc_auc": roc_auc,
+        "val_pr_auc": pr_auc,
     }
 
     # Confusion matrix, aligned with the same predictions used in the report
+    # (cm may already be computed above for the selected candidate, but keep this
+    # as the source of truth for the report output.)
     cm = confusion_matrix(val_labels, val_pred_used, labels=label_indices)
     # (Confusion matrix values are stored directly in metrics.json)
 
@@ -610,17 +1079,30 @@ if __name__ == '__main__':
     # Export: SavedModel -> INT8 TFLite -> .cc (into version folder)
     # -----------------------------
     model_save_path = os.path.join(model_dir, 'my_model')
-    print(f"Exporting the model to {model_save_path}...")
-    model.export(model_save_path)
+    print(f"Exporting the model to {model_save_path}...", flush=True)
+    _export_start = datetime.datetime.now()
+    # Keras 3 export prints a very long "Captures:" dump; silence it to avoid
+    # giving the impression that the process is stuck.
+    from io import StringIO
+    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+        export_model.export(model_save_path)
+    _export_end = datetime.datetime.now()
+    print(f"Export complete in {( _export_end - _export_start ).total_seconds():.1f}s", flush=True)
 
-    print("Converting and quantizing the model (full INT8 with uint8 I/O)...")
+    if EXPORT_OUTPUT == 'logits_margin':
+        print("Converting and quantizing the model (full INT8, uint8 input / int8 output)...", flush=True)
+    else:
+        print("Converting and quantizing the model (full INT8 with uint8 I/O)...", flush=True)
+    _convert_start = datetime.datetime.now()
     converter = tf.lite.TFLiteConverter.from_saved_model(model_save_path)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.representative_dataset = representative_data_gen
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
     converter.inference_input_type = tf.uint8
-    converter.inference_output_type = tf.uint8
+    converter.inference_output_type = (tf.int8 if EXPORT_OUTPUT == 'logits_margin' else tf.uint8)
     tflite_quant_model = converter.convert()
+    _convert_end = datetime.datetime.now()
+    print(f"TFLite conversion complete in {( _convert_end - _convert_start ).total_seconds():.1f}s", flush=True)
 
     quant_model_path = os.path.join(model_dir, f'{MODEL_NAME}.tflite')
     with open(quant_model_path, 'wb') as f:
@@ -662,7 +1144,8 @@ if __name__ == '__main__':
             "output_dtype": str(output_details['dtype']),
             "arena_estimate_bytes": arena_estimate,
             "arena_estimate_kb": round(arena_estimate / 1024, 2),
-            "quantization": input_details.get('quantization', None),
+            "input_quantization": input_details.get('quantization', None),
+            "output_quantization": output_details.get('quantization', None),
         }
     
     tflite_details = get_tflite_details(quant_model_path)
@@ -672,6 +1155,27 @@ if __name__ == '__main__':
     
     # Update metrics with TFLite details
     metrics["tflite_details"] = tflite_details
+
+    # If exporting logits margin, compute an int-domain threshold to use on-device.
+    try:
+        if EXPORT_OUTPUT == 'logits_margin' and CLASS_COUNT == 2:
+            out_q = tflite_details.get('output_quantization')
+            if isinstance(out_q, (list, tuple)) and len(out_q) == 2:
+                out_scale = float(out_q[0])
+                out_zp = int(out_q[1])
+                margin_thr = float(report_params.get('prey_logit_margin_threshold'))
+                if out_scale > 0:
+                    q_thr = int(round(margin_thr / out_scale) + out_zp)
+                    metrics['tflite_output_threshold'] = {
+                        'mode': 'logits_margin',
+                        'margin_threshold': margin_thr,
+                        'quantized_threshold': q_thr,
+                        'scale': out_scale,
+                        'zero_point': out_zp,
+                    }
+    except Exception as e:
+        print(f"Warning: failed to compute quantized output threshold: {e}")
+
     with open(metrics_json_path, 'w') as f:
         json.dump(_to_native(metrics), f, indent=2)
     print(f"Updated metrics JSON with TFLite details")

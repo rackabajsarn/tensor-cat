@@ -133,8 +133,24 @@ data_augmentation = tf.keras.Sequential([
 def preprocess_image(image_path, label):
     image = tf.io.read_file(image_path)
     image = tf.image.decode_jpeg(image, channels=3)
-    shorter_side = tf.minimum(tf.shape(image)[0], tf.shape(image)[1])
-    image = tf.image.resize_with_crop_or_pad(image, shorter_side, shorter_side)    
+    h = tf.shape(image)[0]
+    w = tf.shape(image)[1]
+    min_dim = tf.minimum(h, w)
+
+    desired_crop = tf.where(
+        min_dim >= 480,
+        tf.constant(384, dtype=min_dim.dtype),
+        tf.where(
+            min_dim >= 240,
+            tf.constant(192, dtype=min_dim.dtype),
+            min_dim,
+        ),
+    )
+    crop_size = tf.minimum(desired_crop, min_dim)
+    offset_y = (h - crop_size) // 2
+    offset_x = (w - crop_size) // 2
+    image = tf.image.crop_to_bounding_box(image, offset_y, offset_x, crop_size, crop_size)
+
     image = tf.image.resize(image, IMG_SIZE)
     image = image / 255.0  # Normalize to [0,1]
     return image, label

@@ -86,6 +86,7 @@ LOCAL_PARAM_DEFAULTS = {
     "seed": 0,
     "class_count": 2,
     "max_samples_per_class": 0,
+    "width_mult": 0.75,
     "val_split": 0.2,
     "early_stop_patience": 5,
     "weight_decay": 1e-5,
@@ -105,6 +106,7 @@ LOCAL_PARAM_LIMITS = {
     "seed": {"min": 0, "max": 999999},
     "class_count": [2, 3],
     "max_samples_per_class": {"min": 0, "max": 1000},
+    "width_mult": {"min": 0.4, "max": 1.0, "step": 0.05},
     "val_split": {"min": 0.05, "max": 0.4, "step": 0.05},
     "early_stop_patience": {"min": 1, "max": 20},
     "weight_decay": [0.0, 1e-6, 3e-6, 1e-5, 3e-5, 1e-4],
@@ -401,6 +403,15 @@ def list_model_versions(scope):
             continue
         
         metadata_path = os.path.join(version_dir, 'metadata.json')
+        # Trainers write into models/<scope>/<version>/{model,reports}. Some flows
+        # (notably local simple training) may not create metadata.json, so create it
+        # opportunistically from reports/metrics.json to keep the UI consistent.
+        if not os.path.exists(metadata_path):
+            try:
+                save_model_version(scope, name)
+            except Exception as e:
+                logging.error(f"Error generating metadata for {scope} version {name}: {e}")
+
         if os.path.exists(metadata_path):
             try:
                 with open(metadata_path, 'r') as f:
@@ -970,10 +981,23 @@ def classify_image(image_path):
         # Preprocess the image
         # Open the image and convert to RGB
         image = Image.open(image_path).convert('RGB')
-        
-        # Center crop to the smaller dimension to create a square
-        shorter_side = min(image.size)  # Get the smaller of width or height
-        image = ImageOps.fit(image, (shorter_side, shorter_side), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+
+        # Resolution-dependent center crop to match training/data capture:
+        # - legacy 640x480 -> 384x384 center crop
+        # - new 320x240    -> 192x192 center crop
+        w, h = image.size
+        min_dim = min(w, h)
+        if min_dim >= 480:
+            crop_size = 384
+        elif min_dim >= 240:
+            crop_size = 192
+        else:
+            crop_size = min_dim
+
+        crop_size = min(crop_size, w, h)
+        left = (w - crop_size) // 2
+        top = (h - crop_size) // 2
+        image = image.crop((left, top, left + crop_size, top + crop_size))
         
         # Resize to target dimensions
         image = image.resize(IMG_SIZE, Image.Resampling.LANCZOS)
@@ -1078,10 +1102,23 @@ def upload_model_to_esp32(version_name=None):
                     if isinstance(class_count_val, int) and class_count_val > 0:
                         metadata_payload['number_of_labels'] = class_count_val
 
+                    # If the local model exports logits margin (single output), adapt ESP32 metadata.
+                    export_output = training_params.get('export_output') if isinstance(training_params, dict) else None
+                    if export_output == 'logits_margin':
+                        metadata_payload['number_of_labels'] = 1
+                        margin_thr = training_params.get('prey_logit_margin_threshold')
+                        try:
+                            if margin_thr is not None:
+                                metadata_payload['threshold_value'] = float(margin_thr)
+                        except (TypeError, ValueError):
+                            pass
+
                     thr_val = training_params.get('prey_threshold') if isinstance(training_params, dict) else None
                     try:
                         if thr_val is not None:
-                            metadata_payload['threshold_value'] = float(thr_val)
+                            # For probability-output models, threshold_value is the prey probability.
+                            if metadata_payload.get('number_of_labels') != 1:
+                                metadata_payload['threshold_value'] = float(thr_val)
                     except (TypeError, ValueError):
                         pass
 
@@ -1155,6 +1192,7 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
         # Build the command for main Coral TPU model
         command = [
             python_executable,
+            '-u',
             train_script_path,
             '--epochs', str(epochs),
             '--fine_tune_epochs', str(fine_tune_epochs),
@@ -1168,8 +1206,9 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True  # To capture output as string
+            stderr=subprocess.STDOUT,
+            text=True,  # To capture output as string
+            bufsize=1
         )
 
         logging.info("Coral TPU model retraining process started.")
@@ -1192,13 +1231,6 @@ def run_retraining(epochs, fine_tune_epochs, learning_rate, fine_tune_at):
                 logging.info(line)
         process.stdout.close()
         return_code = process.wait()
-
-        # Read any remaining stderr
-        stderr = process.stderr.read()
-        if stderr:
-            logging.error(stderr.strip())
-            retraining_status['output'] += stderr
-        process.stderr.close()
         
         if return_code != 0:
             error_message = f"Coral TPU model training failed with return code: {return_code}"
@@ -1248,6 +1280,7 @@ def run_local_retraining(
     seed,
     class_count,
     max_samples_per_class,
+    width_mult,
     val_split,
     early_stop_patience,
     weight_decay,
@@ -1279,6 +1312,7 @@ def run_local_retraining(
         run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         command = [
             python_executable,
+            '-u',
             train_simple_script_path,
             '--epochs', str(epochs),
             '--learning_rate', str(learning_rate),
@@ -1286,6 +1320,7 @@ def run_local_retraining(
             '--seed', str(seed),
             '--class_count', str(class_count),
             '--run_id', run_id,
+            '--width_mult', str(width_mult),
             '--val_split', str(val_split),
             '--early_stop_patience', str(early_stop_patience),
             '--weight_decay', str(weight_decay),
@@ -1303,8 +1338,9 @@ def run_local_retraining(
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
         )
 
         while True:
@@ -1324,12 +1360,6 @@ def run_local_retraining(
 
         process.stdout.close()
         return_code = process.wait()
-
-        stderr = process.stderr.read()
-        if stderr:
-            logging.error(stderr.strip())
-            local_retraining_status['output'] += stderr
-        process.stderr.close()
 
         if return_code != 0:
             error_message = f"Local model training failed with return code: {return_code}"
@@ -1361,6 +1391,7 @@ def run_local_retraining(
             seed=seed,
             class_count=class_count,
             max_samples_per_class=max_samples_per_class,
+            width_mult=width_mult,
             val_split=val_split,
             early_stop_patience=early_stop_patience,
             weight_decay=weight_decay,
@@ -1457,7 +1488,7 @@ def get_model_info():
 def update_model_info(section='server', last_trained=None, images_used=None, retraining=None,
                       epochs=None, fine_tune_epochs=None, learning_rate=None, fine_tune_at=None,
                       batch_size=None, seed=None, class_count=None, max_samples_per_class=None,
-                      val_split=None, early_stop_patience=None, weight_decay=None, dropout=None,
+                      width_mult=None, val_split=None, early_stop_patience=None, weight_decay=None, dropout=None,
                       augment=None, use_class_weights=None, label_smoothing=None, lr_schedule=None,
                       warmup_epochs=None):
     data = get_model_info()
@@ -1493,6 +1524,8 @@ def update_model_info(section='server', last_trained=None, images_used=None, ret
             params['class_count'] = class_count
         if max_samples_per_class is not None:
             params['max_samples_per_class'] = max_samples_per_class
+        if width_mult is not None:
+            params['width_mult'] = width_mult
         if val_split is not None:
             params['val_split'] = val_split
         if early_stop_patience is not None:
@@ -2008,6 +2041,17 @@ def retrain_model():
         except Exception as e:
             flash('Invalid learning rate selected.', 'danger')
             return redirect(url_for('model'))
+
+        # Persist chosen params immediately so the UI reflects the submitted values
+        # even while retraining is running.
+        update_model_info(
+            section='server',
+            retraining=True,
+            epochs=epochs,
+            fine_tune_epochs=fine_tune_epochs,
+            learning_rate=learning_rate_str,
+            fine_tune_at=fine_tune_at,
+        )
         
         # Start retraining in a separate thread and pass parameters
         retrain_thread = threading.Thread(target=run_retraining, args=(epochs, fine_tune_epochs, learning_rate_str, fine_tune_at))
@@ -2034,6 +2078,7 @@ def retrain_local_model():
         default=LOCAL_PARAM_DEFAULTS['max_samples_per_class'],
         type=int
     )
+    width_mult = request.form.get('local_width_mult', default=LOCAL_PARAM_DEFAULTS['width_mult'], type=float)
     val_split = request.form.get('local_val_split', default=LOCAL_PARAM_DEFAULTS['val_split'], type=float)
     early_stop_patience = request.form.get('local_early_stop_patience', default=LOCAL_PARAM_DEFAULTS['early_stop_patience'], type=int)
     weight_decay = request.form.get('local_weight_decay', default=LOCAL_PARAM_DEFAULTS['weight_decay'], type=float)
@@ -2074,6 +2119,11 @@ def retrain_local_model():
     sample_limits = LOCAL_PARAM_LIMITS['max_samples_per_class']
     if max_samples_per_class is None or max_samples_per_class < sample_limits['min'] or max_samples_per_class > sample_limits['max']:
         flash(f"Max samples per class must be between {sample_limits['min']} and {sample_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
+    width_mult_limits = LOCAL_PARAM_LIMITS['width_mult']
+    if width_mult is None or width_mult < width_mult_limits['min'] or width_mult > width_mult_limits['max']:
+        flash(f"Width multiplier must be between {width_mult_limits['min']} and {width_mult_limits['max']}.", 'danger')
         return redirect(url_for('model'))
 
     val_limits = LOCAL_PARAM_LIMITS['val_split']
@@ -2122,6 +2172,7 @@ def retrain_local_model():
             seed,
             class_count,
             max_samples_per_class,
+            width_mult,
             val_split,
             early_stop_patience,
             weight_decay,
@@ -2132,6 +2183,29 @@ def retrain_local_model():
             lr_schedule,
             warmup_epochs
         )
+    )
+
+    # Persist chosen params immediately so the UI reflects the submitted values
+    # even while retraining is running.
+    update_model_info(
+        section='local',
+        retraining=True,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        seed=seed,
+        class_count=class_count,
+        max_samples_per_class=max_samples_per_class,
+        width_mult=width_mult,
+        val_split=val_split,
+        early_stop_patience=early_stop_patience,
+        weight_decay=weight_decay,
+        dropout=dropout,
+        augment=augment,
+        use_class_weights=use_class_weights,
+        label_smoothing=label_smoothing,
+        lr_schedule=lr_schedule,
+        warmup_epochs=warmup_epochs,
     )
     retrain_thread.start()
 
