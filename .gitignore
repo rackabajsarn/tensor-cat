@@ -8,3 +8,4 @@ models/
 logs/
 simple_model/
 tensor_cat.db
+optimization/

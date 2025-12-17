@@ -39,8 +39,12 @@ parser.add_argument('--batch_size', type=int, default=32, help='Batch size.')
 parser.add_argument('--seed', type=int, default=0, help='Random seed.')
 parser.add_argument('--class_count', type=int, choices=[2, 3], default=2,
                     help='Number of output classes. Use 2 for [prey, not_prey] or 3 for [prey, not_prey, not_cat].')
+parser.add_argument('--negative_policy', choices=['all', 'cat_entering_only'], default='all',
+                    help='Which negatives to include for the 2-class model. all=use all non-prey as not_prey. cat_entering_only=keep only (cat & entering & !prey) as negatives and drop other frames.')
 parser.add_argument('--prefer_recall', action='store_true',
                     help='Use the best recall checkpoint (binary only). Defaults to best accuracy.')
+parser.add_argument('--target_recall', type=float, default=0.90,
+                    help='Target prey recall on validation when selecting the prey threshold (used with --prefer_recall; 2-class only).')
 parser.add_argument('--export_logit_scale', type=float, default=1.0,
                     help='Scale logits before softmax at export/eval time (improves probability spread for quantized uint8 output).')
 parser.add_argument('--export_output', choices=['probs', 'logits_margin'], default='probs',
@@ -61,6 +65,36 @@ parser.add_argument('--use_class_weights', choices=['on', 'off'], default='on', 
 parser.add_argument('--label_smoothing', type=float, default=0.0, help='Label smoothing factor (0-0.2).')
 parser.add_argument('--lr_schedule', choices=['constant', 'cosine', 'step'], default='cosine', help='LR schedule type.')
 parser.add_argument('--warmup_epochs', type=int, default=0, help='Warmup epochs for LR schedule.')
+parser.add_argument('--split_manifest', type=str, default=None,
+                    help='Optional JSON file specifying explicit train/val(/test) splits. Format: {"train": ["img.jpg",...], "val": [...], "test": [...]}')
+parser.add_argument('--dump_misclassified', type=int, default=0,
+                    help='If >0, dumps up to N false-positives and N false-negatives (96x96 preprocessed) into reports/images for debugging.')
+parser.add_argument('--skip_export', action='store_true',
+                    help='If set, skips SavedModel/TFLite/.cc export to speed up sweeps. Metrics JSON is still written.')
+parser.add_argument('--distill_teacher', type=str, default=None,
+                    help='Optional path to a trained teacher .keras model. If set, train the student with knowledge distillation (hard labels + soft teacher targets).')
+parser.add_argument('--distill_alpha', type=float, default=0.5,
+                    help='Distillation mixing factor in [0..1]. 1.0=only hard labels, 0.0=only teacher soft targets.')
+parser.add_argument('--distill_temperature', type=float, default=2.0,
+                    help='Distillation temperature (>0). Higher = softer targets.')
+parser.add_argument('--distill_teacher_is_logits', action='store_true',
+                    help='If set, treat teacher output as logits (will apply softmax). Default assumes teacher outputs probabilities.')
+parser.add_argument(
+    '--distill_teacher_prey_index',
+    type=int,
+    default=None,
+    help=(
+        'Optional: index of the prey class in the TEACHER output. If set, the teacher output is mapped to the student '
+        'classes. For CLASS_COUNT=2, student probs become [prey, 1-prey]. For CLASS_COUNT=3, provide both prey and '
+        'not_cat indices to map [prey, 1-prey-not_cat, not_cat]. This enables using a 5-class server teacher.'
+    ),
+)
+parser.add_argument(
+    '--distill_teacher_not_cat_index',
+    type=int,
+    default=None,
+    help='Optional: index of the not_cat class in the TEACHER output (used only when CLASS_COUNT=3 with teacher mapping).',
+)
 args = parser.parse_args()
 
 EPOCHS = args.epochs
@@ -68,7 +102,11 @@ INIT_LR = float(args.learning_rate)
 BATCH_SIZE = args.batch_size
 SEED = args.seed
 CLASS_COUNT = args.class_count
+NEGATIVE_POLICY = str(getattr(args, 'negative_policy', 'all') or 'all')
 PREFER_RECALL = bool(args.prefer_recall and CLASS_COUNT == 2)
+TARGET_RECALL = float(getattr(args, 'target_recall', 0.90))
+if not (0.0 < TARGET_RECALL <= 1.0):
+    TARGET_RECALL = 0.90
 EXPORT_LOGIT_SCALE = max(1e-6, float(args.export_logit_scale))
 EXPORT_OUTPUT = str(args.export_output)
 MAX_SAMPLES_PER_CLASS = max(0, args.max_samples_per_class)
@@ -83,9 +121,99 @@ USE_CLASS_WEIGHTS = (args.use_class_weights == 'on')
 LABEL_SMOOTHING = min(max(args.label_smoothing, 0.0), 0.2)
 LR_SCHEDULE = args.lr_schedule
 WARMUP_EPOCHS = max(0, min(int(args.warmup_epochs), 20))
+SPLIT_MANIFEST = args.split_manifest
+DUMP_MISCLASSIFIED = max(0, int(args.dump_misclassified))
+SKIP_EXPORT = bool(getattr(args, 'skip_export', False))
+DISTILL_TEACHER = str(getattr(args, 'distill_teacher', '') or '').strip() or None
+DISTILL_ALPHA = float(getattr(args, 'distill_alpha', 0.5))
+DISTILL_TEMPERATURE = float(getattr(args, 'distill_temperature', 2.0))
+DISTILL_TEACHER_IS_LOGITS = bool(getattr(args, 'distill_teacher_is_logits', False))
+DISTILL_TEACHER_PREY_INDEX = getattr(args, 'distill_teacher_prey_index', None)
+DISTILL_TEACHER_NOT_CAT_INDEX = getattr(args, 'distill_teacher_not_cat_index', None)
 random.seed(SEED)
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
+
+if DISTILL_ALPHA < 0.0 or DISTILL_ALPHA > 1.0:
+    raise ValueError('--distill_alpha must be in [0..1]')
+if DISTILL_TEMPERATURE <= 0.0:
+    raise ValueError('--distill_temperature must be > 0')
+
+
+@tf.keras.utils.register_keras_serializable(package='tensor-cat')
+def smoothed_sparse_cce(y_true, y_pred):
+    """Sparse CCE with label smoothing, implemented via one-hot + CCE.
+
+    Used as a fallback when SparseCategoricalCrossentropy(label_smoothing=...) is
+    unavailable in the installed TF/Keras build.
+    """
+
+    # Keras may pass labels as shape (B,) or (B,1); reshape deterministically.
+    y_true = tf.cast(y_true, tf.int32)
+    y_true = tf.reshape(y_true, [-1])
+    y_true_one_hot = tf.one_hot(y_true, depth=CLASS_COUNT)
+    smooth = tf.cast(LABEL_SMOOTHING, tf.float32)
+    y_true_smooth = y_true_one_hot * (1.0 - smooth) + smooth / tf.cast(CLASS_COUNT, tf.float32)
+    return tf.keras.losses.CategoricalCrossentropy()(y_true_smooth, y_pred)
+
+
+@tf.keras.utils.register_keras_serializable(package='tensor-cat')
+class PreyPrecision(tf.keras.metrics.Metric):
+    """Binary precision for the prey class when training with sparse labels.
+
+    Keras' built-in Precision(class_id=...) assumes y_true matches y_pred shape.
+    Our pipeline uses sparse integer labels (shape [B]) with softmax probs
+    (shape [B,C]), so we adapt y_true/y_pred to a binary view.
+    """
+
+    def __init__(self, prey_index: int = 0, name: str = 'precision_prey', **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.prey_index = int(prey_index)
+        self._metric = tf.keras.metrics.Precision()
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+        y_true_bin = tf.cast(tf.equal(y_true, self.prey_index), tf.float32)
+        y_pred_bin = tf.cast(y_pred[:, self.prey_index], tf.float32)
+        return self._metric.update_state(y_true_bin, y_pred_bin, sample_weight=sample_weight)
+
+    def result(self):
+        return self._metric.result()
+
+    def reset_state(self):
+        self._metric.reset_state()
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update({"prey_index": int(self.prey_index)})
+        return cfg
+
+
+@tf.keras.utils.register_keras_serializable(package='tensor-cat')
+class PreyRecall(tf.keras.metrics.Metric):
+    """Binary recall for the prey class when training with sparse labels."""
+
+    def __init__(self, prey_index: int = 0, name: str = 'recall_prey', **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.prey_index = int(prey_index)
+        self._metric = tf.keras.metrics.Recall()
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+        y_true_bin = tf.cast(tf.equal(y_true, self.prey_index), tf.float32)
+        y_pred_bin = tf.cast(y_pred[:, self.prey_index], tf.float32)
+        return self._metric.update_state(y_true_bin, y_pred_bin, sample_weight=sample_weight)
+
+    def result(self):
+        return self._metric.result()
+
+    def reset_state(self):
+        self._metric.reset_state()
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update({"prey_index": int(self.prey_index)})
+        return cfg
 
 # -----------------------------
 # Paths (per-version under models/local/<run_id>)
@@ -162,6 +290,36 @@ def filter_excluded_samples(image_paths, labels_list):
         kept_labels.append(labels)
     return kept_paths, kept_labels, excluded
 
+
+def filter_by_negative_policy(image_paths, labels_list):
+    """Optionally drop samples that shouldn't be used as negatives.
+
+    This is only applied for 2-class runs.
+    """
+    if CLASS_COUNT != 2:
+        return image_paths, labels_list, 0
+
+    policy = str(NEGATIVE_POLICY or 'all')
+    if policy == 'all':
+        return image_paths, labels_list, 0
+    if policy != 'cat_entering_only':
+        print(f"Warning: unknown negative_policy '{policy}', using 'all'")
+        return image_paths, labels_list, 0
+
+    kept_paths = []
+    kept_labels = []
+    dropped = 0
+    for p, labels in zip(image_paths, labels_list):
+        prey = bool(labels.get('prey', False))
+        cat = bool(labels.get('cat', False))
+        enter = bool(labels.get('entering', False))
+        if prey or (cat and enter):
+            kept_paths.append(p)
+            kept_labels.append(labels)
+        else:
+            dropped += 1
+    return kept_paths, kept_labels, dropped
+
 def convert_labels(labels_list):
     labels_encoded = []
     for labels in labels_list:
@@ -198,6 +356,30 @@ def limit_samples_per_class(image_paths, labels_encoded, max_per_class, seed=0):
     limited_paths = [p for p, _ in limited_pairs]
     limited_labels = [lbl for _, lbl in limited_pairs]
     return limited_paths, limited_labels
+
+
+def _load_split_manifest(path: str):
+    if not path:
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        out = {}
+        for k in ('train', 'val', 'test'):
+            v = data.get(k)
+            if v is None:
+                continue
+            if not isinstance(v, list):
+                raise ValueError(f"split_manifest key '{k}' must be a list")
+            out[k] = [str(x) for x in v]
+        if 'train' not in out or 'val' not in out:
+            raise ValueError("split_manifest must contain at least 'train' and 'val'")
+        return out
+    except Exception as e:
+        print(f"Warning: failed to load split manifest '{path}': {e}")
+        return None
 
 # -----------------------------
 # Preprocessing (no external /255 — use model Rescaling layer instead)
@@ -360,6 +542,30 @@ def build_model():
     return tf.keras.Model(inputs, outputs)
 
 
+def _load_teacher_model(path: str, *, allow_output_dim_mismatch: bool) -> tf.keras.Model:
+    if not path:
+        raise ValueError('Teacher model path is empty')
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Teacher model not found: {path}")
+    teacher = tf.keras.models.load_model(path)
+
+    # Light shape sanity check: teacher must output CLASS_COUNT logits/probs,
+    # unless the user provided a teacher->student mapping.
+    try:
+        out_shape = teacher.output_shape
+        if isinstance(out_shape, (list, tuple)) and len(out_shape) >= 2:
+            out_dim = out_shape[-1]
+            if (not allow_output_dim_mismatch) and out_dim is not None and int(out_dim) != int(CLASS_COUNT):
+                raise ValueError(
+                    f"Teacher output dim {out_dim} != CLASS_COUNT {CLASS_COUNT}. "
+                    "Train a teacher with the same --class_count." 
+                )
+    except Exception:
+        # If shape introspection fails, we'll still try to run.
+        pass
+    return teacher
+
+
 def make_export_model(
     base_model: tf.keras.Model,
     *,
@@ -406,6 +612,244 @@ def make_export_model(
     margin = layers.Subtract(name='logits_margin')([prey_logit, not_prey_logit])
     return tf.keras.Model(base_model.input, margin, name=f"export_logits_margin_x{float(export_logit_scale):g}")
 
+
+class _StudentModelCheckpoint(tf.keras.callbacks.Callback):
+    """Checkpoint callback that saves the *student* model.
+
+    Used for distillation training where the fit() model is a wrapper.
+    """
+
+    def __init__(self, *, student_model: tf.keras.Model, filepath: str, monitor: str, mode: str = 'max'):
+        super().__init__()
+        self.student_model = student_model
+        self.filepath = str(filepath)
+        self.monitor = str(monitor)
+        self.mode = str(mode)
+        self.best = None
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        current = logs.get(self.monitor)
+        if current is None:
+            return
+        try:
+            current = float(current)
+        except Exception:
+            return
+
+        improved = False
+        if self.best is None:
+            improved = True
+        elif self.mode == 'min':
+            improved = current < self.best
+        else:
+            improved = current > self.best
+
+        if improved:
+            self.best = current
+            os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
+            self.student_model.save(self.filepath)
+
+
+class DistillationModel(tf.keras.Model):
+    """Teacher-student distillation wrapper.
+
+    Trains student with: alpha * hard_loss + (1-alpha) * T^2 * KL(teacher_T || student_T)
+
+    Notes:
+    - Validation loss is the *hard* loss (ground-truth), so early-stopping keeps
+      optimizing the real objective.
+    - Checkpoints should save the student model (see _StudentModelCheckpoint).
+    """
+
+    def __init__(
+        self,
+        *,
+        student: tf.keras.Model,
+        teacher: tf.keras.Model,
+        temperature: float,
+        alpha: float,
+        teacher_is_logits: bool,
+        teacher_prey_index: int | None = None,
+        teacher_not_cat_index: int | None = None,
+        extra_metrics: list[tf.keras.metrics.Metric] | None = None,
+    ):
+        super().__init__()
+        self.student = student
+        self.teacher = teacher
+        self.temperature = float(temperature)
+        self.alpha = float(alpha)
+        self.teacher_is_logits = bool(teacher_is_logits)
+
+        self.teacher_prey_index = (None if teacher_prey_index is None else int(teacher_prey_index))
+        self.teacher_not_cat_index = (None if teacher_not_cat_index is None else int(teacher_not_cat_index))
+
+        # Cache teacher input expectations for lightweight adaptation.
+        try:
+            self._teacher_input_shape = teacher.input_shape
+        except Exception:
+            self._teacher_input_shape = None
+        try:
+            dt = teacher.inputs[0].dtype
+            self._teacher_input_dtype = (dt if isinstance(dt, tf.DType) else tf.as_dtype(dt))
+        except Exception:
+            self._teacher_input_dtype = tf.float32
+
+        self._extra_metrics = list(extra_metrics or [])
+
+        self.total_loss_tracker = tf.keras.metrics.Mean(name='loss')
+        self.hard_loss_tracker = tf.keras.metrics.Mean(name='hard_loss')
+        self.distill_loss_tracker = tf.keras.metrics.Mean(name='distill_loss')
+
+    @property
+    def metrics(self):
+        return [
+            self.total_loss_tracker,
+            self.hard_loss_tracker,
+            self.distill_loss_tracker,
+            *self._extra_metrics,
+        ]
+
+    def call(self, inputs, training=False):
+        return self.student(inputs, training=training)
+
+    def _to_teacher_probs(self, teacher_out: tf.Tensor) -> tf.Tensor:
+        teacher_out = tf.cast(teacher_out, tf.float32)
+        if self.teacher_is_logits:
+            return tf.nn.softmax(teacher_out, axis=-1)
+        # Assume teacher already outputs probabilities.
+        # Normalize defensively in case of small numeric drift.
+        teacher_out = tf.clip_by_value(teacher_out, 1e-7, 1.0)
+        return teacher_out / tf.reduce_sum(teacher_out, axis=-1, keepdims=True)
+
+    def _prepare_teacher_input(self, x: tf.Tensor) -> tf.Tensor:
+        """Adapt student batch to teacher expected input (shape/dtype).
+
+        Student uses uint8 96x96x1.
+        Typical server teacher uses float32 224x224x3 in [0..1].
+        """
+        teacher_x = x
+
+        # Determine teacher expected spatial size + channels if available.
+        target_h = None
+        target_w = None
+        target_c = None
+        shp = self._teacher_input_shape
+        if isinstance(shp, (list, tuple)) and len(shp) >= 4:
+            try:
+                target_h = int(shp[1]) if shp[1] is not None else None
+                target_w = int(shp[2]) if shp[2] is not None else None
+                target_c = int(shp[3]) if shp[3] is not None else None
+            except Exception:
+                target_h = target_w = target_c = None
+
+        # If teacher expects float input, cast + scale uint8->[0..1].
+        if self._teacher_input_dtype.is_floating:
+            teacher_x = tf.cast(teacher_x, tf.float32)
+            if x.dtype.is_integer:
+                teacher_x = teacher_x / 255.0
+
+        # Channels adaptation (support 1 <-> 3).
+        if target_c is not None:
+            in_c = teacher_x.shape[-1]
+            if in_c is not None:
+                in_c = int(in_c)
+            if in_c == 1 and target_c == 3:
+                teacher_x = tf.image.grayscale_to_rgb(teacher_x)
+            elif in_c == 3 and target_c == 1:
+                teacher_x = tf.image.rgb_to_grayscale(teacher_x)
+            elif in_c is not None and in_c != target_c:
+                raise ValueError(f"Unsupported teacher channel count {target_c} for input channels {in_c}")
+
+        # Resize if teacher has a fixed size.
+        if target_h is not None and target_w is not None:
+            teacher_x = tf.image.resize(teacher_x, (target_h, target_w), method='bilinear', antialias=True)
+
+        # Final cast if teacher expects float16/bfloat16/etc.
+        if self._teacher_input_dtype.is_floating and self._teacher_input_dtype != tf.float32:
+            teacher_x = tf.cast(teacher_x, self._teacher_input_dtype)
+
+        return teacher_x
+
+    def _map_teacher_probs_to_student(self, teacher_probs: tf.Tensor) -> tf.Tensor:
+        if self.teacher_prey_index is None:
+            return teacher_probs
+
+        prey_p = teacher_probs[:, self.teacher_prey_index:self.teacher_prey_index + 1]
+        prey_p = tf.clip_by_value(prey_p, 0.0, 1.0)
+
+        if int(CLASS_COUNT) == 2:
+            not_prey_p = tf.clip_by_value(1.0 - prey_p, 0.0, 1.0)
+            return tf.concat([prey_p, not_prey_p], axis=-1)
+
+        if int(CLASS_COUNT) == 3:
+            if self.teacher_not_cat_index is None:
+                raise ValueError('CLASS_COUNT=3 teacher mapping requires --distill_teacher_not_cat_index')
+            not_cat_p = teacher_probs[:, self.teacher_not_cat_index:self.teacher_not_cat_index + 1]
+            not_cat_p = tf.clip_by_value(not_cat_p, 0.0, 1.0)
+            not_prey_p = tf.clip_by_value(1.0 - prey_p - not_cat_p, 0.0, 1.0)
+            return tf.concat([prey_p, not_prey_p, not_cat_p], axis=-1)
+
+        raise ValueError('Teacher mapping only supported for CLASS_COUNT 2 or 3')
+
+    def _apply_temperature(self, probs: tf.Tensor) -> tf.Tensor:
+        # Compute soft distribution via log-probs temperature scaling:
+        # soft = softmax(log(p) / T)
+        p = tf.clip_by_value(tf.cast(probs, tf.float32), 1e-7, 1.0)
+        logits = tf.math.log(p)
+        return tf.nn.softmax(logits / tf.cast(self.temperature, tf.float32), axis=-1)
+
+    def train_step(self, data):
+        x, y, sample_weight = tf.keras.utils.unpack_x_y_sample_weight(data)
+
+        with tf.GradientTape() as tape:
+            student_probs = self.student(x, training=True)
+            hard_loss = self.compiled_loss(
+                y,
+                student_probs,
+                sample_weight=sample_weight,
+                regularization_losses=self.student.losses,
+            )
+
+            teacher_x = self._prepare_teacher_input(x)
+            teacher_out = self.teacher(teacher_x, training=False)
+            teacher_probs = self._to_teacher_probs(teacher_out)
+            teacher_probs = self._map_teacher_probs_to_student(teacher_probs)
+
+            teacher_soft = self._apply_temperature(teacher_probs)
+            student_soft = self._apply_temperature(student_probs)
+            kl = tf.keras.losses.KLDivergence()(teacher_soft, student_soft)
+            distill_loss = kl * (self.temperature * self.temperature)
+
+            total_loss = self.alpha * hard_loss + (1.0 - self.alpha) * distill_loss
+
+        grads = tape.gradient(total_loss, self.student.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.student.trainable_variables))
+
+        for metric in self._extra_metrics:
+            metric.update_state(y, student_probs, sample_weight=sample_weight)
+        self.total_loss_tracker.update_state(total_loss)
+        self.hard_loss_tracker.update_state(hard_loss)
+        self.distill_loss_tracker.update_state(distill_loss)
+        return {m.name: m.result() for m in self.metrics}
+
+    def test_step(self, data):
+        # Validation: track *hard* loss only (ground-truth objective)
+        x, y, sample_weight = tf.keras.utils.unpack_x_y_sample_weight(data)
+        student_probs = self.student(x, training=False)
+        hard_loss = self.compiled_loss(
+            y,
+            student_probs,
+            sample_weight=sample_weight,
+            regularization_losses=self.student.losses,
+        )
+        for metric in self._extra_metrics:
+            metric.update_state(y, student_probs, sample_weight=sample_weight)
+        self.total_loss_tracker.update_state(hard_loss)
+        self.hard_loss_tracker.update_state(hard_loss)
+        self.distill_loss_tracker.update_state(0.0)
+        return {m.name: m.result() for m in self.metrics}
+
 # -----------------------------
 # Training
 # -----------------------------
@@ -428,6 +872,11 @@ if __name__ == '__main__':
     image_paths, labels_list, excluded = filter_excluded_samples(image_paths, labels_list)
     if excluded:
         print(f"Excluded {excluded} cat_morris_leaving samples from training dataset.")
+
+    image_paths, labels_list, dropped_by_policy = filter_by_negative_policy(image_paths, labels_list)
+    if dropped_by_policy:
+        print(f"Dropped {dropped_by_policy} samples due to negative_policy={NEGATIVE_POLICY}.")
+
     labels_encoded = convert_labels(labels_list)
 
     original_class_counts = Counter(labels_encoded)
@@ -443,9 +892,44 @@ if __name__ == '__main__':
     class_distribution = {CLASSES[label]: count for label, count in class_counts.items()}
     print("Class distribution (named):", class_distribution)
 
-    # Split (stratified)
-    train_paths, val_paths, train_labels, val_labels = train_test_split(
-        image_paths, labels_encoded, test_size=VAL_SPLIT, random_state=SEED, stratify=labels_encoded)
+    # Split: either explicit manifest or stratified split
+    split_manifest = _load_split_manifest(SPLIT_MANIFEST)
+    test_paths, test_labels = None, None
+    if split_manifest:
+        # Build lookup by basename for stable manifests.
+        by_name = {}
+        for p, lbl in zip(image_paths, labels_encoded):
+            by_name[os.path.basename(p)] = (p, lbl)
+
+        def _resolve(names):
+            paths = []
+            labels = []
+            missing = 0
+            for n in names:
+                key = os.path.basename(str(n))
+                if key in by_name:
+                    p, lbl = by_name[key]
+                    paths.append(p)
+                    labels.append(lbl)
+                else:
+                    missing += 1
+            if missing:
+                print(f"Warning: split_manifest missing {missing} files (excluded or not found)")
+            return paths, labels
+
+        train_paths, train_labels = _resolve(split_manifest.get('train', []))
+        val_paths, val_labels = _resolve(split_manifest.get('val', []))
+        if split_manifest.get('test'):
+            test_paths, test_labels = _resolve(split_manifest.get('test', []))
+
+        if not train_paths or not val_paths:
+            print("Warning: split_manifest produced empty train/val; falling back to stratified split")
+            train_paths, val_paths, train_labels, val_labels = train_test_split(
+                image_paths, labels_encoded, test_size=VAL_SPLIT, random_state=SEED, stratify=labels_encoded)
+            test_paths, test_labels = None, None
+    else:
+        train_paths, val_paths, train_labels, val_labels = train_test_split(
+            image_paths, labels_encoded, test_size=VAL_SPLIT, random_state=SEED, stratify=labels_encoded)
 
     # Make split sizes explicit (helps catch accidental tiny validation sets)
     try:
@@ -515,7 +999,22 @@ if __name__ == '__main__':
         print(f"Warning: failed to dump preprocessed images: {e}")
 
     # Model & optimizer
-    model = build_model()
+    student_model = build_model()
+
+    teacher_model = None
+    use_distillation = bool(DISTILL_TEACHER)
+    if use_distillation:
+        allow_mismatch = (DISTILL_TEACHER_PREY_INDEX is not None)
+        teacher_model = _load_teacher_model(DISTILL_TEACHER, allow_output_dim_mismatch=allow_mismatch)
+        print(
+            f"Distillation enabled: teacher='{DISTILL_TEACHER}' "
+            f"alpha={DISTILL_ALPHA:g} T={DISTILL_TEMPERATURE:g} teacher_is_logits={DISTILL_TEACHER_IS_LOGITS}"
+        )
+        if DISTILL_TEACHER_PREY_INDEX is not None:
+            print(
+                f"Teacher->student mapping enabled: prey_index={int(DISTILL_TEACHER_PREY_INDEX)}"
+                + (f" not_cat_index={int(DISTILL_TEACHER_NOT_CAT_INDEX)}" if DISTILL_TEACHER_NOT_CAT_INDEX is not None else "")
+            )
 
     steps_per_epoch = max(1, len(train_paths)//BATCH_SIZE)
     total_steps = max(1, steps_per_epoch * EPOCHS)
@@ -554,8 +1053,8 @@ if __name__ == '__main__':
 
     # Metrics focused on 'prey' class
     prey_index = CLASSES.index('prey')
-    precision_prey = tf.keras.metrics.Precision(class_id=prey_index, name='precision_prey')
-    recall_prey = tf.keras.metrics.Recall(class_id=prey_index, name='recall_prey')
+    precision_prey = PreyPrecision(prey_index=prey_index, name='precision_prey')
+    recall_prey = PreyRecall(prey_index=prey_index, name='recall_prey')
 
     def make_loss():
         try:
@@ -564,41 +1063,76 @@ if __name__ == '__main__':
             # Fallback for older TF/Keras builds without label_smoothing support on sparse CCE
             if LABEL_SMOOTHING > 0:
                 print("SparseCategoricalCrossentropy lacks label_smoothing; applying manual smoothing.")
-
-                def smoothed_sparse_cce(y_true, y_pred):
-                    y_true = tf.cast(tf.squeeze(y_true), tf.int32)
-                    y_true_one_hot = tf.one_hot(y_true, depth=CLASS_COUNT)
-                    smooth = LABEL_SMOOTHING
-                    y_true_smooth = y_true_one_hot * (1.0 - smooth) + smooth / float(CLASS_COUNT)
-                    return tf.keras.losses.categorical_crossentropy(y_true_smooth, y_pred)
-
                 return smoothed_sparse_cce
             return tf.keras.losses.SparseCategoricalCrossentropy()
 
     loss = make_loss()
-    model.compile(
-        optimizer=optimizer,
-        loss=loss,
-        metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
-                 precision_prey, recall_prey]
-    )
+
+    train_model = student_model
+    if use_distillation:
+        train_model = DistillationModel(
+            student=student_model,
+            teacher=teacher_model,
+            temperature=DISTILL_TEMPERATURE,
+            alpha=DISTILL_ALPHA,
+            teacher_is_logits=DISTILL_TEACHER_IS_LOGITS,
+            teacher_prey_index=DISTILL_TEACHER_PREY_INDEX,
+            teacher_not_cat_index=DISTILL_TEACHER_NOT_CAT_INDEX,
+            extra_metrics=[
+                tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
+                precision_prey,
+                recall_prey,
+            ],
+        )
+        # Metrics are handled inside the wrapper.
+        train_model.compile(
+            optimizer=optimizer,
+            loss=loss,
+        )
+    else:
+        train_model.compile(
+            optimizer=optimizer,
+            loss=loss,
+            metrics=[
+                tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
+                precision_prey,
+                recall_prey,
+            ],
+        )
 
     # Callbacks - save checkpoints inside this run's versioned model directory
-    checkpoint_acc = tf.keras.callbacks.ModelCheckpoint(
-        filepath=os.path.join(model_dir, 'best_acc_model.keras'),
-        monitor='val_accuracy', mode='max', save_best_only=True
-    )
-    checkpoint_recall = tf.keras.callbacks.ModelCheckpoint(
-        filepath=os.path.join(model_dir, 'best_recall_model.keras'),
-        monitor='val_recall_prey', mode='max', save_best_only=True
-    )
+    best_acc_path = os.path.join(model_dir, 'best_acc_model.keras')
+    best_recall_path = os.path.join(model_dir, 'best_recall_model.keras')
+
+    if use_distillation:
+        checkpoint_acc = _StudentModelCheckpoint(
+            student_model=student_model,
+            filepath=best_acc_path,
+            monitor='val_accuracy',
+            mode='max',
+        )
+        checkpoint_recall = _StudentModelCheckpoint(
+            student_model=student_model,
+            filepath=best_recall_path,
+            monitor='val_recall_prey',
+            mode='max',
+        )
+    else:
+        checkpoint_acc = tf.keras.callbacks.ModelCheckpoint(
+            filepath=best_acc_path,
+            monitor='val_accuracy', mode='max', save_best_only=True
+        )
+        checkpoint_recall = tf.keras.callbacks.ModelCheckpoint(
+            filepath=best_recall_path,
+            monitor='val_recall_prey', mode='max', save_best_only=True
+        )
     early_stopping = tf.keras.callbacks.EarlyStopping(
         monitor='val_loss', patience=EARLY_STOP_PATIENCE, mode='min', restore_best_weights=True
     )
     progress_callback = ProgressCallback(total_epochs=EPOCHS)
 
     # Train
-    history = model.fit(
+    history = train_model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
@@ -612,8 +1146,8 @@ if __name__ == '__main__':
     # - best-accuracy checkpoint
     # - best-recall checkpoint
     # Then choose the one that best matches our deployment objective.
-    best_acc_path = os.path.join(model_dir, 'best_acc_model.keras')
-    best_recall_path = os.path.join(model_dir, 'best_recall_model.keras')
+    # Student model weights are updated by training (and EarlyStopping restore_best_weights).
+    model = student_model
     model_val_loss = model
 
     # Collect curves for metrics.json (no separate plot files)
@@ -694,7 +1228,26 @@ if __name__ == '__main__':
             }
 
         if mode == 'recall':
-            # Avoid the trivial "everything prey" threshold when possible.
+            # Primary objective: hit TARGET_RECALL if possible.
+            # Among thresholds that meet target: minimize FP, then maximize precision, then fewer predicted positives, then higher threshold.
+            target = float(TARGET_RECALL)
+            meets_target = [c for c in candidates if c[2] > 0 and c[5] >= target]
+
+            def _with_target_meta(stats: dict, *, met: bool):
+                stats = dict(stats)
+                stats["target_recall"] = float(target)
+                stats["met_target_recall"] = bool(met)
+                return stats
+
+            if meets_target:
+                non_trivial = [c for c in meets_target if c[6] < n_total]
+                pool = non_trivial or meets_target
+                pool_sorted = sorted(pool, key=lambda c: (c[1], -c[4], c[6], -c[0]))
+                best_item = pool_sorted[0]
+                stats = _with_target_meta(_stats_from_tuple(best_item), met=True)
+                return float(stats["threshold"]), stats
+
+            # Secondary objective: maximize recall, with some FP control and avoiding trivial "all prey" when possible.
             non_trivial = [c for c in candidates if c[2] > 0 and c[6] < n_total]
             if not non_trivial:
                 non_trivial = [c for c in candidates if c[2] > 0]
@@ -706,16 +1259,19 @@ if __name__ == '__main__':
                 pool = [c for c in non_trivial if c[1] <= fp_cap]
                 if not pool:
                     continue
-                # Max recall, then fewer FP, then fewer predicted positives, then higher threshold.
                 pool_sorted = sorted(pool, key=lambda c: (-c[5], c[1], c[6], -c[0]))
                 best_item = pool_sorted[0]
-                stats = _stats_from_tuple(best_item, fp_cap_used=fp_cap)
+                stats = _with_target_meta(_stats_from_tuple(best_item, fp_cap_used=fp_cap), met=False)
                 return float(stats["threshold"]), stats
 
             # Fallback: best recall overall, but still prefer fewer FP and fewer predicted positives.
-            pool_sorted = sorted(non_trivial, key=lambda c: (-c[5], c[1], c[6], -c[0])) if non_trivial else sorted(candidates, key=lambda c: (-c[5], c[1], c[6], -c[0]))
+            pool_sorted = (
+                sorted(non_trivial, key=lambda c: (-c[5], c[1], c[6], -c[0]))
+                if non_trivial
+                else sorted(candidates, key=lambda c: (-c[5], c[1], c[6], -c[0]))
+            )
             best_item = pool_sorted[0]
-            stats = _stats_from_tuple(best_item)
+            stats = _with_target_meta(_stats_from_tuple(best_item), met=False)
             return float(stats["threshold"]), stats
 
         # Default: minimize FP, but require TP>0 when possible to avoid all-not_prey.
@@ -747,32 +1303,60 @@ if __name__ == '__main__':
 
         probs_all = candidate_export_model.predict(x, batch_size=BATCH_SIZE, verbose=0)
         prey_probs = np.asarray(probs_all[:, prey_index], dtype=np.float32)
-        chosen_thr, stats = _select_threshold(prey_probs, y_true, mode=('recall' if PREFER_RECALL else 'min_fp'))
 
+        # Candidate evaluation must match the prediction scheme used by the run.
         if CLASS_COUNT == 2:
+            chosen_thr, stats = _select_threshold(prey_probs, y_true, mode=('recall' if PREFER_RECALL else 'min_fp'))
             not_prey_index = CLASSES.index('not_prey')
             pred_labels_used = np.where(prey_probs >= chosen_thr, prey_index, not_prey_index).astype(int)
             cm_used = confusion_matrix(val_labels, pred_labels_used, labels=[0, 1])
+
+            fp = int(stats["fp"]) if stats else 0
+            tp = int(stats["tp"]) if stats else 0
+            fn = int(stats["fn"]) if stats else 0
+            recall = float(stats["recall"]) if stats else 0.0
+            pred_pos = int(stats.get("pred_pos")) if isinstance(stats, dict) and stats.get("pred_pos") is not None else 0
         else:
+            # 3-class: use argmax predictions and compute prey-vs-rest stats from that.
+            chosen_thr = None
             pred_labels_used = np.argmax(probs_all, axis=1)
             cm_used = confusion_matrix(val_labels, pred_labels_used, labels=list(range(len(CLASSES))))
 
-        fp = int(stats["fp"]) if stats else 0
-        tp = int(stats["tp"]) if stats else 0
-        fn = int(stats["fn"]) if stats else 0
-        recall = float(stats["recall"]) if stats else 0.0
-        pred_pos = int(stats.get("pred_pos")) if isinstance(stats, dict) and stats.get("pred_pos") is not None else 0
+            y_pred_prey = (pred_labels_used == prey_index)
+            fp = int(np.sum(y_pred_prey & (y_true == 0)))
+            tp = int(np.sum(y_pred_prey & (y_true == 1)))
+            fn = int(np.sum((~y_pred_prey) & (y_true == 1)))
+            pred_pos = int(np.sum(y_pred_prey))
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            stats = {
+                "threshold": None,
+                "fp": fp,
+                "tp": tp,
+                "fn": fn,
+                "precision": float(precision),
+                "recall": float(recall),
+                "pred_pos": pred_pos,
+                "pred_pos_rate": float(pred_pos / int(y_true.size)) if int(y_true.size) > 0 else None,
+                "mode": "argmax",
+                "fp_cap_used": None,
+                "n_neg": int(np.sum(y_true == 0)),
+                "n_total": int(y_true.size),
+            }
+
         has_tp = tp > 0
         if PREFER_RECALL:
             # Prefer any model that yields at least one TP. Then maximize recall under FP cap.
-            key = (0 if has_tp else 1, -recall, fp, pred_pos, float(chosen_thr))
+            thr_key = float(chosen_thr) if chosen_thr is not None else 0.0
+            key = (0 if has_tp else 1, -recall, fp, pred_pos, thr_key)
         else:
             # Prefer any model that yields at least one TP. Then minimize FP, maximize recall.
-            key = (0 if has_tp else 1, fp, -recall, -tp, float(chosen_thr))
+            thr_key = float(chosen_thr) if chosen_thr is not None else 0.0
+            key = (0 if has_tp else 1, fp, -recall, -tp, thr_key)
         return {
             "name": str(name),
             "key": key,
-            "threshold": float(chosen_thr),
+            "threshold": float(chosen_thr) if chosen_thr is not None else None,
             "stats": stats,
             "cm": cm_used,
             "probs": probs_all,
@@ -827,7 +1411,9 @@ if __name__ == '__main__':
     checkpoint_choice = selected['name']
     val_probs = selected['probs']
     val_pred_labels = np.argmax(val_probs, axis=1)
-    chosen_thr = float(selected['threshold'])
+    chosen_thr = selected.get('threshold')
+    if chosen_thr is not None:
+        chosen_thr = float(chosen_thr)
     best_stats = selected['stats']
     cm = selected['cm']
     export_model = make_export_model(model, export_logit_scale=EXPORT_LOGIT_SCALE, export_output=EXPORT_OUTPUT)
@@ -984,6 +1570,7 @@ if __name__ == '__main__':
         "batch_size": BATCH_SIZE,
         "seed": SEED,
         "class_count": CLASS_COUNT,
+        "negative_policy": NEGATIVE_POLICY,
         "max_samples_per_class": MAX_SAMPLES_PER_CLASS,
         "train_size": len(train_paths),
         "val_size": len(val_paths),
@@ -999,6 +1586,8 @@ if __name__ == '__main__':
         "label_smoothing": LABEL_SMOOTHING,
         "lr_schedule": LR_SCHEDULE,
         "warmup_epochs": WARMUP_EPOCHS,
+        "split_manifest": SPLIT_MANIFEST,
+        "dump_misclassified": DUMP_MISCLASSIFIED,
         "export_logit_scale": float(EXPORT_LOGIT_SCALE),
         "export_output": str(EXPORT_OUTPUT),
         "checkpoint_choice": checkpoint_choice,
@@ -1009,7 +1598,57 @@ if __name__ == '__main__':
         "val_majority_baseline_accuracy": majority_baseline_accuracy,
         "val_roc_auc": roc_auc,
         "val_pr_auc": pr_auc,
+        "distill_teacher": DISTILL_TEACHER,
+        "distill_alpha": float(DISTILL_ALPHA) if DISTILL_TEACHER else None,
+        "distill_temperature": float(DISTILL_TEMPERATURE) if DISTILL_TEACHER else None,
+        "distill_teacher_is_logits": bool(DISTILL_TEACHER_IS_LOGITS) if DISTILL_TEACHER else None,
+        "distill_teacher_prey_index": int(DISTILL_TEACHER_PREY_INDEX) if (DISTILL_TEACHER and DISTILL_TEACHER_PREY_INDEX is not None) else None,
+        "distill_teacher_not_cat_index": int(DISTILL_TEACHER_NOT_CAT_INDEX) if (DISTILL_TEACHER and DISTILL_TEACHER_NOT_CAT_INDEX is not None) else None,
     }
+
+    def _dump_misclassified(
+        *,
+        tag: str,
+        paths: list,
+        y_true_binary: np.ndarray,
+        prey_probs: np.ndarray,
+        threshold: float,
+        max_per_type: int,
+    ):
+        if max_per_type <= 0:
+            return
+        try:
+            out_dir = os.path.join(images_dir, f"misclassified_{tag}")
+            os.makedirs(out_dir, exist_ok=True)
+
+            y_true_binary = np.asarray(y_true_binary, dtype=np.int32)
+            prey_probs = np.asarray(prey_probs, dtype=np.float32)
+            pred = (prey_probs >= float(threshold)).astype(np.int32)
+
+            fp_idx = np.where((pred == 1) & (y_true_binary == 0))[0]
+            fn_idx = np.where((pred == 0) & (y_true_binary == 1))[0]
+
+            # Sort FPs by highest prey prob; FNs by lowest prey prob.
+            fp_idx = fp_idx[np.argsort(-prey_probs[fp_idx])] if fp_idx.size else fp_idx
+            fn_idx = fn_idx[np.argsort(prey_probs[fn_idx])] if fn_idx.size else fn_idx
+
+            def _save(indices, kind):
+                for rank, i in enumerate(indices[:max_per_type]):
+                    p = paths[int(i)]
+                    img_u8, _ = preprocess_image(p, 0)
+                    arr = tf.cast(img_u8, tf.uint8).numpy()
+                    if arr.ndim == 3 and arr.shape[-1] == 1:
+                        arr = arr[:, :, 0]
+                    img_pil = Image.fromarray(arr.astype(np.uint8), mode='L')
+                    base = os.path.basename(p)
+                    score = float(prey_probs[int(i)])
+                    fname = f"{kind}_{rank:02d}_p{score:.4f}_{base}.png"
+                    img_pil.save(os.path.join(out_dir, fname))
+
+            _save(fp_idx, 'fp')
+            _save(fn_idx, 'fn')
+        except Exception as e:
+            print(f"Warning: failed to dump misclassified ({tag}): {e}")
 
     # Confusion matrix, aligned with the same predictions used in the report
     # (cm may already be computed above for the selected candidate, but keep this
@@ -1067,13 +1706,105 @@ if __name__ == '__main__':
             "accuracy": list(map(float, acc)),
             "val_accuracy": list(map(float, val_acc)),
             "loss": list(map(float, loss_hist)),
-            "val_loss": list(map(float, val_loss_hist))
-        }
+            "val_loss": list(map(float, val_loss_hist)),
+        },
     }
 
     with open(metrics_json_path, 'w') as f:
         json.dump(_to_native(metrics), f, indent=2)
     print(f"Metrics JSON saved to {metrics_json_path}")
+
+    # Optional: dump misclassified validation examples (binary only).
+    try:
+        if CLASS_COUNT == 2 and DUMP_MISCLASSIFIED > 0:
+            prey_probs = np.asarray(val_probs[:, prey_index], dtype=np.float32)
+            _dump_misclassified(
+                tag='val',
+                paths=list(val_paths),
+                y_true_binary=y_true,
+                prey_probs=prey_probs,
+                threshold=chosen_thr,
+                max_per_type=DUMP_MISCLASSIFIED,
+            )
+    except Exception as e:
+        print(f"Warning: misclassified dump failed: {e}")
+
+    # Optional: evaluate on explicit test split (if present in split_manifest)
+    try:
+        if test_paths and test_labels:
+            test_images_u8 = load_val_array(test_paths)
+            test_labels_arr = np.asarray(test_labels, dtype=np.int32)
+            test_y_true = (test_labels_arr == prey_index).astype(np.int32)
+
+            x = test_images_u8
+            probs_all = make_export_model(
+                model,
+                export_logit_scale=EXPORT_LOGIT_SCALE,
+                export_output='probs',
+            ).predict(x, batch_size=BATCH_SIZE, verbose=0)
+            test_prey_probs = np.asarray(probs_all[:, prey_index], dtype=np.float32)
+
+            if CLASS_COUNT == 2:
+                not_prey_index = CLASSES.index('not_prey')
+                test_pred_used = np.where(test_prey_probs >= chosen_thr, prey_index, not_prey_index).astype(int)
+                test_report_dict = classification_report(
+                    test_labels_arr,
+                    test_pred_used,
+                    labels=[0, 1],
+                    target_names=CLASSES,
+                    zero_division=0,
+                    output_dict=True,
+                )
+                test_cm = confusion_matrix(test_labels_arr, test_pred_used, labels=[0, 1]).tolist()
+            else:
+                test_pred_used = np.argmax(probs_all, axis=1)
+                label_indices = list(range(len(CLASSES)))
+                test_report_dict = classification_report(
+                    test_labels_arr,
+                    test_pred_used,
+                    labels=label_indices,
+                    target_names=CLASSES,
+                    zero_division=0,
+                    output_dict=True,
+                )
+                test_cm = confusion_matrix(test_labels_arr, test_pred_used, labels=label_indices).tolist()
+
+            # AUCs on test (if both classes present)
+            try:
+                pos = test_prey_probs[test_y_true == 1]
+                neg = test_prey_probs[test_y_true == 0]
+                test_roc_auc = float(roc_auc_score(test_y_true, test_prey_probs)) if (pos.size and neg.size) else None
+                test_pr_auc = float(average_precision_score(test_y_true, test_prey_probs)) if (pos.size and neg.size) else None
+            except Exception:
+                test_roc_auc, test_pr_auc = None, None
+
+            metrics['test'] = {
+                'size': int(len(test_paths)),
+                'report': test_report_dict,
+                'confusion_matrix': test_cm,
+                'roc_auc': test_roc_auc,
+                'pr_auc': test_pr_auc,
+            }
+
+            with open(metrics_json_path, 'w') as f:
+                json.dump(_to_native(metrics), f, indent=2)
+            print("Updated metrics JSON with test evaluation")
+
+            if CLASS_COUNT == 2 and DUMP_MISCLASSIFIED > 0:
+                _dump_misclassified(
+                    tag='test',
+                    paths=list(test_paths),
+                    y_true_binary=test_y_true,
+                    prey_probs=test_prey_probs,
+                    threshold=chosen_thr,
+                    max_per_type=DUMP_MISCLASSIFIED,
+                )
+    except Exception as e:
+        print(f"Warning: test evaluation failed: {e}")
+
+    if SKIP_EXPORT:
+        print("Skipping export (--skip_export set)")
+        raise SystemExit(0)
 
     # -----------------------------
     # Export: SavedModel -> INT8 TFLite -> .cc (into version folder)

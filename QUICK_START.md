@@ -82,23 +82,32 @@ python app.py
 
 ### Option A: Via Web UI
 1. Navigate to http://SERVER_IP:5000/model
-2. Adjust parameters if needed:
-   - Epochs: 10 (Coral model)
-   - Simple model epochs: 40 (ESP32 model)
-3. Click "Retrain Model"
-4. Monitor progress bar (0-50%: Coral, 50-100%: ESP32)
-5. Wait for automatic upload to ESP32
+2. Use **Local model (ESP32)** training to generate the ESP32-deployable model.
+3. (Recommended) Use these key settings for high prey recall:
+  - `negative_policy=cat_entering_only`
+  - `prefer_recall=on`, `target_recall=0.90`
+  - `export_output=logits_margin` (single int8 output) or `export_output=probs` (2-class uint8 softmax)
+  - (Optional) `split_manifest=optimization/split_manifest_seed42_cat_entering_only.json`
+4. Click the local retrain button and monitor progress.
+5. After the run finishes, **Activate** the new local model version.
+
+> Activation uploads the model + metadata to the ESP32 (unless offline mode is enabled).
 
 ### Option B: Command Line
 ```bash
 cd tensor-cat
 
-# Train both models
-python train_model.py --epochs 10 --fine_tune_epochs 5
-python train_simple_model.py --epochs 40
+# Train the ESP32 model (example: recall-first + cat_entering_only + margin output)
+python train_simple_model.py \
+  --epochs 40 \
+  --negative_policy cat_entering_only \
+  --prefer_recall --target_recall 0.90 \
+  --export_output logits_margin --export_logit_scale 1.0 \
+  --split_manifest optimization/split_manifest_seed42_cat_entering_only.json
 
-# Upload to ESP32 (replace <RUN_ID> with the folder under models/local created by the training run)
-curl -F "file=@models/local/<RUN_ID>/model/my_simple_model_quant.tflite" http://192.168.1.14/upload
+# Upload to ESP32 (model + metadata)
+curl -F "file=@models/local/<RUN_ID>/model/my_simple_model_quant.tflite" http://ESP32_IP/upload_model
+curl -F "file=@models/local/<RUN_ID>/metadata.json" http://ESP32_IP/upload_metadata
 ```
 
 ---
@@ -121,7 +130,8 @@ Uptime: 123s
 ### 2. Test Model Upload
 ```bash
 # From tensor-cat directory
-curl -F "file=@models/local/<RUN_ID>/model/my_simple_model_quant.tflite" http://192.168.1.14/upload
+curl -F "file=@models/local/<RUN_ID>/model/my_simple_model_quant.tflite" http://ESP32_IP/upload_model
+curl -F "file=@models/local/<RUN_ID>/metadata.json" http://ESP32_IP/upload_metadata
 ```
 
 Expected: `Model uploaded successfully`
@@ -190,13 +200,12 @@ entities:
 
 ## Common Tasks
 
-### Switch Model Source (ESP32)
+### Set Inference Mode (ESP32)
 ```bash
-# Use SD card model
-mosquitto_pub -h MQTT_BROKER -t "catflap/model_source/set" -m "ON"
-
-# Use embedded model
-mosquitto_pub -h MQTT_BROKER -t "catflap/model_source/set" -m "OFF"
+# Valid values: local | server | both
+mosquitto_pub -h MQTT_BROKER -t "catflap/inference_mode/set" -m "local"
+mosquitto_pub -h MQTT_BROKER -t "catflap/inference_mode/set" -m "server"
+mosquitto_pub -h MQTT_BROKER -t "catflap/inference_mode/set" -m "both"
 ```
 
 ### Force Snapshot
@@ -241,7 +250,7 @@ mosquitto_sub -h MQTT_BROKER -t "catflap/debug" -v
 1. Check model loaded: `curl http://ESP32_IP/status`
 2. Verify MQTT broker running
 3. Test with snapshot command
-4. Check tensor arena size (20KB default)
+4. If using `export_output=logits_margin`, ensure the ESP32 firmware registers the extra ops used by the margin model.
 
 ### Models Disagree Frequently
 1. Check `catflap/inference_comparison` for accuracy
@@ -309,12 +318,23 @@ cp models/local/<RUN_ID>/model/my_simple_model_quant.tflite local_simple_backup_
 ### Restore Model
 ```bash
 # Upload to ESP32 SD card
-curl -F "file=@local_simple_backup_20250101.tflite" http://ESP32_IP/upload
+curl -F "file=@local_simple_backup_20250101.tflite" http://ESP32_IP/upload_model
 
 # Or replace embedded model
 cp model_backup_20250101.cc CatCam2/lib/model/model.cc
 pio run --target upload
 ```
+
+---
+
+## Notes on Thresholds / Outputs (ESP32)
+
+The ESP32 reads the decision threshold from the uploaded metadata JSON (`threshold_value`).
+
+- If `export_output=probs` (uint8 softmax, 2 outputs): set `threshold_value` to `prey_threshold`.
+- If `export_output=logits_margin` (int8 single output): set `threshold_value` to `prey_logit_margin_threshold`.
+
+When you activate a local model via the Web UI, the server uploads the correct threshold automatically.
 
 ---
 

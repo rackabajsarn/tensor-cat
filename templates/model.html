@@ -251,7 +251,7 @@
                        name="local_width_mult"
                        value="{{ local_params.width_mult if local_params.width_mult is defined else 0.75 }}"
                        min="0.40"
-                       max="1.00"
+                       max="2.00"
                        step="0.05">
                 <span class="range-value" data-for="local_width_mult">{{ local_params.width_mult if local_params.width_mult is defined else 0.75 }}</span>
             </div>
@@ -306,6 +306,114 @@
             <div class="form-field">
                 <label for="local_warmup_epochs">Warmup Epochs</label>
                 <input type="number" id="local_warmup_epochs" name="local_warmup_epochs" value="{{ local_params.warmup_epochs }}" min="0" max="20" step="1">
+            </div>
+
+            <div class="form-field">
+                <label for="local_negative_policy">Negative Policy</label>
+                <select id="local_negative_policy" name="local_negative_policy">
+                    {% for opt in negative_policy_options %}
+                        <option value="{{ opt }}" {% if local_params.negative_policy is defined and opt == local_params.negative_policy %}selected{% endif %}>{{ opt }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-field">
+                <label for="local_prefer_recall">Recall-first thresholding</label>
+                <select id="local_prefer_recall" name="local_prefer_recall">
+                    <option value="on" {% if local_params.prefer_recall is defined and local_params.prefer_recall %}selected{% endif %}>On (select threshold to hit target recall)</option>
+                    <option value="off" {% if local_params.prefer_recall is not defined or not local_params.prefer_recall %}selected{% endif %}>Off (default thresholding)</option>
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="local_target_recall">Target Recall (when recall-first is on)</label>
+                <input type="number" id="local_target_recall" name="local_target_recall"
+                       value="{{ local_params.target_recall if local_params.target_recall is defined else 0.90 }}"
+                       min="0.50" max="0.999" step="0.01">
+            </div>
+
+            <div class="form-field">
+                <label for="local_export_output">Export Output</label>
+                <select id="local_export_output" name="local_export_output">
+                    {% for opt in export_output_options %}
+                        <option value="{{ opt }}" {% if local_params.export_output is defined and opt == local_params.export_output %}selected{% endif %}>{{ opt }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-field">
+                <label for="local_export_logit_scale">Export Logit Scale</label>
+                <input type="number" id="local_export_logit_scale" name="local_export_logit_scale"
+                       value="{{ local_params.export_logit_scale if local_params.export_logit_scale is defined else 1.0 }}"
+                       min="0.1" max="10.0" step="0.1">
+            </div>
+
+            <div class="form-field">
+                <label for="local_split_manifest">Split Manifest (optional)</label>
+                <input type="text" id="local_split_manifest" name="local_split_manifest"
+                       value="{{ local_params.split_manifest if local_params.split_manifest is defined else '' }}"
+                       list="split-manifest-list" placeholder="(empty = use val_split)">
+                <datalist id="split-manifest-list">
+                    {% for opt in split_manifest_options %}
+                        <option value="{{ opt }}"></option>
+                    {% endfor %}
+                </datalist>
+            </div>
+
+            <div class="form-field">
+                <label for="local_dump_misclassified">Dump Misclassified (0 = off)</label>
+                <input type="number" id="local_dump_misclassified" name="local_dump_misclassified"
+                       value="{{ local_params.dump_misclassified if local_params.dump_misclassified is defined else 0 }}"
+                       min="0" max="5000" step="10">
+            </div>
+
+            <div class="form-field">
+                <label for="local_skip_export">Skip Export</label>
+                <select id="local_skip_export" name="local_skip_export">
+                    <option value="off" {% if local_params.skip_export is not defined or not local_params.skip_export %}selected{% endif %}>Off (export TFLite)</option>
+                    <option value="on" {% if local_params.skip_export is defined and local_params.skip_export %}selected{% endif %}>On (train only)</option>
+                </select>
+            </div>
+
+            <div class="form-field">
+                <label for="local_distill_teacher">Distillation Teacher (.keras, optional)</label>
+                <input type="text" id="local_distill_teacher" name="local_distill_teacher"
+                       value="{{ local_params.distill_teacher if local_params.distill_teacher is defined else '' }}"
+                       list="teacher-model-list" placeholder="(empty = no distillation)">
+                <datalist id="teacher-model-list">
+                    {% for opt in teacher_model_options %}
+                        <option value="{{ opt }}"></option>
+                    {% endfor %}
+                </datalist>
+            </div>
+            <div class="form-field" data-distill>
+                <label for="local_distill_alpha">Distill Alpha (1.0=only hard labels)</label>
+                <input type="number" id="local_distill_alpha" name="local_distill_alpha"
+                       value="{{ local_params.distill_alpha if local_params.distill_alpha is defined else 0.5 }}"
+                       min="0.0" max="1.0" step="0.05">
+            </div>
+            <div class="form-field" data-distill>
+                <label for="local_distill_temperature">Distill Temperature</label>
+                <input type="number" id="local_distill_temperature" name="local_distill_temperature"
+                       value="{{ local_params.distill_temperature if local_params.distill_temperature is defined else 2.0 }}"
+                       min="0.5" max="10.0" step="0.5">
+            </div>
+            <div class="form-field" data-distill>
+                <label for="local_distill_teacher_is_logits">Teacher Outputs Are Logits</label>
+                <select id="local_distill_teacher_is_logits" name="local_distill_teacher_is_logits">
+                    <option value="off" {% if local_params.distill_teacher_is_logits is not defined or not local_params.distill_teacher_is_logits %}selected{% endif %}>Off (teacher outputs probs)</option>
+                    <option value="on" {% if local_params.distill_teacher_is_logits is defined and local_params.distill_teacher_is_logits %}selected{% endif %}>On (teacher outputs logits)</option>
+                </select>
+            </div>
+            <div class="form-field" data-distill>
+                <label for="local_distill_teacher_prey_index">Teacher prey index (optional)</label>
+                <input type="number" id="local_distill_teacher_prey_index" name="local_distill_teacher_prey_index"
+                       value="{{ local_params.distill_teacher_prey_index if local_params.distill_teacher_prey_index is defined else '' }}"
+                       min="0" max="20" step="1">
+            </div>
+            <div class="form-field" data-distill>
+                <label for="local_distill_teacher_not_cat_index">Teacher not_cat index (optional)</label>
+                <input type="number" id="local_distill_teacher_not_cat_index" name="local_distill_teacher_not_cat_index"
+                       value="{{ local_params.distill_teacher_not_cat_index if local_params.distill_teacher_not_cat_index is defined else '' }}"
+                       min="0" max="20" step="1">
             </div>
             <button type="submit">Retrain Local Model</button>
         </form>
@@ -437,6 +545,7 @@
             <li><strong>Fine-tune Epochs</strong> — extra passes after unfreezing. Keep modest to avoid destroying pretrained features; extend only if validation keeps improving.</li>
             <li><strong>Learning Rate</strong> — optimizer step size. Higher = faster progress but can spike loss; lower = steadier, slower. If loss oscillates, lower this.</li>
             <li><strong>Unfreeze From Layer</strong> — layer index where fine-tuning begins. Higher index freezes more of the backbone (safer, less compute); lower index retrains more layers (potentially better accuracy, higher overfit risk).</li>
+            <li><strong>Upload/Activate</strong> — activating a model version uploads it to the ESP32 (unless offline mode is enabled).</li>
         </ul>
     </div>
 </div>
@@ -450,9 +559,9 @@
             <li><strong>Validation Split</strong> — percent held out for validation. More split = better feedback but fewer training samples.</li>
             <li><strong>Learning Rate</strong> — step size. Too high = unstable loss; too low = slow progress. Nudge down if loss spikes.</li>
             <li><strong>Batch Size</strong> — images per step. Larger is smoother/faster on CPU but can generalize slightly worse; smaller is noisier but sometimes better.</li>
-            <li><strong>Classes</strong> — 2-class (prey/not_prey) vs 3-class (adds not_cat). Changing this resets labels and metrics to the new outputs.</li>
+            <li><strong>Classes</strong> — 2-class (prey/not_prey) vs 3-class (adds not_cat). Recall-first thresholding is only meaningful for 2-class.</li>
             <li><strong>Max Samples Per Class</strong> — cap per class for speed/balance. 0 = use all; lower caps shorten training but may drop rare edge cases.</li>
-            <li><strong>Model Width</strong> — scales the CNN channel counts. Lower = smaller/faster model but less accuracy; higher = larger/slower but usually more accurate. Typical values: 0.50–0.75.</li>
+            <li><strong>Model Width</strong> — scales the CNN channel counts. Lower = smaller/faster model but less accuracy; higher = larger/slower but usually more accurate. Typical values: 0.75–2.0 (ESP32-friendly models often land around 1.0–2.0).</li>
             <li><strong>Seed</strong> — fixes shuffling/splits for reproducible results.</li>
             <li><strong>Early Stop Patience</strong> — epochs to wait for val loss to improve. Lower stops earlier (less overfit), higher allows longer climbs.</li>
             <li><strong>Weight Decay</strong> — L2 regularization on weights. Small values reduce overfitting; large values can underfit.</li>
@@ -462,6 +571,13 @@
             <li><strong>Label Smoothing</strong> — softens targets to curb overconfidence. Use small values (≤0.1); too much degrades accuracy.</li>
             <li><strong>LR Schedule</strong> — constant (steady), cosine (smooth decay), or step (sharp drops mid-training). Decay usually helps late-epoch stability.</li>
             <li><strong>Warmup Epochs</strong> — slowly ramp the LR at the start. Useful when using higher LRs or heavy augmentation; 1–3 is typical.</li>
+            <li><strong>Negative Policy</strong> — controls which negatives are used. <em>cat_entering_only</em> typically improves ESP precision by avoiding overly diverse negatives.</li>
+            <li><strong>Recall-first thresholding</strong> — chooses a decision threshold to hit the target recall on validation. This is helpful when labels are sparse and you want to bias toward catching prey.</li>
+            <li><strong>Export Output</strong> — <em>probs</em> exports uint8 softmax scores (2 outputs) and the threshold is a prey probability; <em>logits_margin</em> exports a single int8 “margin” score (prey_logit − not_prey_logit) and the threshold is a margin value.</li>
+            <li><strong>Export Logit Scale</strong> — only applies to <em>logits_margin</em>. It scales the margin before quantization (can affect how “spread out” int8 scores look on-device).</li>
+            <li><strong>Split Manifest</strong> — uses a fixed train/val/test split file for repeatable results. When set, it overrides random splitting/validation split.</li>
+            <li><strong>Skip Export</strong> — trains and writes metrics without exporting TFLite (faster for sweeps).</li>
+            <li><strong>Distillation</strong> — optional teacher-student training (provide a teacher .keras path + alpha/temperature). Leave blank to disable.</li>
         </ul>
     </div>
 </div>
@@ -550,6 +666,31 @@
             input.addEventListener('input', updateValue);
             updateValue();
         });
+
+        // Advanced local form toggles
+        const preferRecallSelect = document.getElementById('local_prefer_recall');
+        const targetRecallInput = document.getElementById('local_target_recall');
+        const teacherInput = document.getElementById('local_distill_teacher');
+        const distillFields = document.querySelectorAll('[data-distill]');
+
+        const syncAdvancedVisibility = () => {
+            if (preferRecallSelect && targetRecallInput) {
+                const enabled = (preferRecallSelect.value === 'on');
+                targetRecallInput.disabled = !enabled;
+            }
+
+            if (teacherInput && distillFields) {
+                const enabled = (teacherInput.value || '').trim().length > 0;
+                distillFields.forEach(el => {
+                    const inputs = el.querySelectorAll('input, select');
+                    inputs.forEach(i => i.disabled = !enabled);
+                });
+            }
+        };
+
+        if (preferRecallSelect) preferRecallSelect.addEventListener('change', syncAdvancedVisibility);
+        if (teacherInput) teacherInput.addEventListener('input', syncAdvancedVisibility);
+        syncAdvancedVisibility();
 
         const updateStatus = (scope, data) => {
             if (!data) {

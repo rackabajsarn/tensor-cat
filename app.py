@@ -95,7 +95,23 @@ LOCAL_PARAM_DEFAULTS = {
     "use_class_weights": True,
     "label_smoothing": 0.0,
     "lr_schedule": "cosine",
-    "warmup_epochs": 0
+    "warmup_epochs": 0,
+    # Advanced / ESP-focused toggles
+    "negative_policy": "all",
+    "prefer_recall": False,
+    "target_recall": 0.90,
+    "export_output": "probs",
+    "export_logit_scale": 1.0,
+    "split_manifest": "",
+    "dump_misclassified": 0,
+    "skip_export": False,
+    # Distillation (optional)
+    "distill_teacher": "",
+    "distill_alpha": 0.5,
+    "distill_temperature": 2.0,
+    "distill_teacher_is_logits": False,
+    "distill_teacher_prey_index": "",
+    "distill_teacher_not_cat_index": "",
 }
 
 # Valid parameter ranges for local model training
@@ -106,7 +122,7 @@ LOCAL_PARAM_LIMITS = {
     "seed": {"min": 0, "max": 999999},
     "class_count": [2, 3],
     "max_samples_per_class": {"min": 0, "max": 1000},
-    "width_mult": {"min": 0.4, "max": 1.0, "step": 0.05},
+    "width_mult": {"min": 0.4, "max": 2.0, "step": 0.05},
     "val_split": {"min": 0.05, "max": 0.4, "step": 0.05},
     "early_stop_patience": {"min": 1, "max": 20},
     "weight_decay": [0.0, 1e-6, 3e-6, 1e-5, 3e-5, 1e-4],
@@ -115,8 +131,57 @@ LOCAL_PARAM_LIMITS = {
     "use_class_weights": [True, False],
     "label_smoothing": {"min": 0.0, "max": 0.2, "step": 0.01},
     "lr_schedule": ["constant", "cosine", "step"],
-    "warmup_epochs": {"min": 0, "max": 20}
+    "warmup_epochs": {"min": 0, "max": 20},
+    # Advanced
+    "negative_policy": ["all", "cat_entering_only"],
+    "export_output": ["probs", "logits_margin"],
+    "target_recall": {"min": 0.50, "max": 0.999, "step": 0.01},
+    "export_logit_scale": {"min": 0.1, "max": 10.0, "step": 0.1},
+    "dump_misclassified": {"min": 0, "max": 5000, "step": 10},
+    "distill_alpha": {"min": 0.0, "max": 1.0, "step": 0.05},
+    "distill_temperature": {"min": 0.5, "max": 10.0, "step": 0.5},
 }
+
+
+def list_split_manifests():
+    """List available split manifests for local training (relative paths)."""
+    try:
+        opt_dir = os.path.join(os.getcwd(), 'optimization')
+        if not os.path.isdir(opt_dir):
+            return []
+        manifests = []
+        for name in os.listdir(opt_dir):
+            if not name.lower().endswith('.json'):
+                continue
+            if not name.startswith('split_manifest'):
+                continue
+            manifests.append(os.path.join('optimization', name))
+        return sorted(manifests)
+    except Exception as e:
+        logging.error(f"Failed to list split manifests: {e}")
+        return []
+
+
+def list_teacher_model_candidates():
+    """List .keras teacher candidates from known model folders (relative paths)."""
+    candidates = []
+    try:
+        roots = [SERVER_MODELS_DIR, LOCAL_MODELS_DIR]
+        for root in roots:
+            if not os.path.isdir(root):
+                continue
+            for dirpath, _, filenames in os.walk(root):
+                for fname in filenames:
+                    if not fname.lower().endswith('.keras'):
+                        continue
+                    full = os.path.join(dirpath, fname)
+                    rel = os.path.relpath(full, os.getcwd())
+                    candidates.append(rel)
+        # Stable ordering: newest-ish first when embedded timestamp dirs exist
+        return sorted(set(candidates), reverse=True)
+    except Exception as e:
+        logging.error(f"Failed to list teacher candidates: {e}")
+        return []
 
 
 def default_section(params_defaults):
@@ -1289,7 +1354,21 @@ def run_local_retraining(
     use_class_weights,
     label_smoothing,
     lr_schedule,
-    warmup_epochs
+    warmup_epochs,
+    negative_policy,
+    prefer_recall,
+    target_recall,
+    export_output,
+    export_logit_scale,
+    split_manifest,
+    dump_misclassified,
+    skip_export,
+    distill_teacher,
+    distill_alpha,
+    distill_temperature,
+    distill_teacher_is_logits,
+    distill_teacher_prey_index,
+    distill_teacher_not_cat_index,
 ):
     global local_retraining_status
     with local_retrain_lock:
@@ -1329,11 +1408,38 @@ def run_local_retraining(
             '--use_class_weights', 'on' if use_class_weights else 'off',
             '--label_smoothing', str(label_smoothing),
             '--lr_schedule', str(lr_schedule),
-            '--warmup_epochs', str(warmup_epochs)
+            '--warmup_epochs', str(warmup_epochs),
+            '--negative_policy', str(negative_policy),
+            '--export_output', str(export_output),
+            '--export_logit_scale', str(export_logit_scale),
         ]
 
         if max_samples_per_class > 0:
             command.extend(['--max_samples_per_class', str(max_samples_per_class)])
+
+        if prefer_recall:
+            command.append('--prefer_recall')
+            command.extend(['--target_recall', str(target_recall)])
+
+        if split_manifest:
+            command.extend(['--split_manifest', str(split_manifest)])
+
+        if dump_misclassified and int(dump_misclassified) > 0:
+            command.extend(['--dump_misclassified', str(int(dump_misclassified))])
+
+        if skip_export:
+            command.append('--skip_export')
+
+        if distill_teacher:
+            command.extend(['--distill_teacher', str(distill_teacher)])
+            command.extend(['--distill_alpha', str(distill_alpha)])
+            command.extend(['--distill_temperature', str(distill_temperature)])
+            if distill_teacher_is_logits:
+                command.append('--distill_teacher_is_logits')
+            if distill_teacher_prey_index is not None:
+                command.extend(['--distill_teacher_prey_index', str(int(distill_teacher_prey_index))])
+            if distill_teacher_not_cat_index is not None:
+                command.extend(['--distill_teacher_not_cat_index', str(int(distill_teacher_not_cat_index))])
 
         process = subprocess.Popen(
             command,
@@ -1400,7 +1506,21 @@ def run_local_retraining(
             use_class_weights=use_class_weights,
             label_smoothing=label_smoothing,
             lr_schedule=lr_schedule,
-            warmup_epochs=warmup_epochs
+            warmup_epochs=warmup_epochs,
+            negative_policy=negative_policy,
+            prefer_recall=prefer_recall,
+            target_recall=target_recall,
+            export_output=export_output,
+            export_logit_scale=export_logit_scale,
+            split_manifest=split_manifest,
+            dump_misclassified=dump_misclassified,
+            skip_export=skip_export,
+            distill_teacher=distill_teacher,
+            distill_alpha=distill_alpha,
+            distill_temperature=distill_temperature,
+            distill_teacher_is_logits=distill_teacher_is_logits,
+            distill_teacher_prey_index=distill_teacher_prey_index,
+            distill_teacher_not_cat_index=distill_teacher_not_cat_index,
         )
         logging.info("Local model retrained successfully.")
 
@@ -1490,7 +1610,12 @@ def update_model_info(section='server', last_trained=None, images_used=None, ret
                       batch_size=None, seed=None, class_count=None, max_samples_per_class=None,
                       width_mult=None, val_split=None, early_stop_patience=None, weight_decay=None, dropout=None,
                       augment=None, use_class_weights=None, label_smoothing=None, lr_schedule=None,
-                      warmup_epochs=None):
+                      warmup_epochs=None,
+                      negative_policy=None, prefer_recall=None, target_recall=None,
+                      export_output=None, export_logit_scale=None, split_manifest=None,
+                      dump_misclassified=None, skip_export=None,
+                      distill_teacher=None, distill_alpha=None, distill_temperature=None,
+                      distill_teacher_is_logits=None, distill_teacher_prey_index=None, distill_teacher_not_cat_index=None):
     data = get_model_info()
     section_defaults = SERVER_PARAM_DEFAULTS if section == 'server' else LOCAL_PARAM_DEFAULTS
     section_data = _ensure_section(data, section, section_defaults)
@@ -1544,6 +1669,36 @@ def update_model_info(section='server', last_trained=None, images_used=None, ret
             params['lr_schedule'] = lr_schedule
         if warmup_epochs is not None:
             params['warmup_epochs'] = warmup_epochs
+
+        if negative_policy is not None:
+            params['negative_policy'] = str(negative_policy)
+        if prefer_recall is not None:
+            params['prefer_recall'] = bool(prefer_recall)
+        if target_recall is not None:
+            params['target_recall'] = float(target_recall)
+        if export_output is not None:
+            params['export_output'] = str(export_output)
+        if export_logit_scale is not None:
+            params['export_logit_scale'] = float(export_logit_scale)
+        if split_manifest is not None:
+            params['split_manifest'] = str(split_manifest)
+        if dump_misclassified is not None:
+            params['dump_misclassified'] = int(dump_misclassified)
+        if skip_export is not None:
+            params['skip_export'] = bool(skip_export)
+
+        if distill_teacher is not None:
+            params['distill_teacher'] = str(distill_teacher)
+        if distill_alpha is not None:
+            params['distill_alpha'] = float(distill_alpha)
+        if distill_temperature is not None:
+            params['distill_temperature'] = float(distill_temperature)
+        if distill_teacher_is_logits is not None:
+            params['distill_teacher_is_logits'] = bool(distill_teacher_is_logits)
+        if distill_teacher_prey_index is not None:
+            params['distill_teacher_prey_index'] = int(distill_teacher_prey_index)
+        if distill_teacher_not_cat_index is not None:
+            params['distill_teacher_not_cat_index'] = int(distill_teacher_not_cat_index)
 
     try:
         with open(MODEL_INFO_PATH, 'w') as f:
@@ -1728,6 +1883,11 @@ def model():
     augment_options = LOCAL_PARAM_LIMITS['augment']
     lr_schedule_options = LOCAL_PARAM_LIMITS['lr_schedule']
 
+    negative_policy_options = LOCAL_PARAM_LIMITS.get('negative_policy', ['all', 'cat_entering_only'])
+    export_output_options = LOCAL_PARAM_LIMITS.get('export_output', ['probs', 'logits_margin'])
+    split_manifest_options = list_split_manifests()
+    teacher_model_options = list_teacher_model_candidates()
+
     active_models = get_active_models()
 
     # Load metrics for the currently active versions (if any)
@@ -1772,6 +1932,10 @@ def model():
         weight_decay_options=weight_decay_options,
         augment_options=augment_options,
         lr_schedule_options=lr_schedule_options,
+        negative_policy_options=negative_policy_options,
+        export_output_options=export_output_options,
+        split_manifest_options=split_manifest_options,
+        teacher_model_options=teacher_model_options,
         active_server_metrics=active_server_metrics,
         active_local_metrics=active_local_metrics,
         active_server_empirical=active_server_empirical,
@@ -2090,6 +2254,42 @@ def retrain_local_model():
     lr_schedule = request.form.get('local_lr_schedule', default=LOCAL_PARAM_DEFAULTS['lr_schedule'])
     warmup_epochs = request.form.get('local_warmup_epochs', default=LOCAL_PARAM_DEFAULTS['warmup_epochs'], type=int)
 
+    negative_policy = request.form.get('local_negative_policy', default=LOCAL_PARAM_DEFAULTS.get('negative_policy', 'all'))
+    prefer_recall_raw = request.form.get('local_prefer_recall', default='off')
+    prefer_recall = str(prefer_recall_raw).lower() == 'on'
+    target_recall = request.form.get('local_target_recall', default=LOCAL_PARAM_DEFAULTS.get('target_recall', 0.90), type=float)
+
+    export_output = request.form.get('local_export_output', default=LOCAL_PARAM_DEFAULTS.get('export_output', 'probs'))
+    export_logit_scale = request.form.get('local_export_logit_scale', default=LOCAL_PARAM_DEFAULTS.get('export_logit_scale', 1.0), type=float)
+    split_manifest = (request.form.get('local_split_manifest', default=LOCAL_PARAM_DEFAULTS.get('split_manifest', '')) or '').strip()
+    dump_misclassified = request.form.get('local_dump_misclassified', default=LOCAL_PARAM_DEFAULTS.get('dump_misclassified', 0), type=int)
+
+    skip_export_raw = request.form.get('local_skip_export', default='off')
+    skip_export = str(skip_export_raw).lower() == 'on'
+
+    distill_teacher = (request.form.get('local_distill_teacher', default=LOCAL_PARAM_DEFAULTS.get('distill_teacher', '')) or '').strip()
+    distill_alpha = request.form.get('local_distill_alpha', default=LOCAL_PARAM_DEFAULTS.get('distill_alpha', 0.5), type=float)
+    distill_temperature = request.form.get('local_distill_temperature', default=LOCAL_PARAM_DEFAULTS.get('distill_temperature', 2.0), type=float)
+    distill_teacher_is_logits_raw = request.form.get('local_distill_teacher_is_logits', default='off')
+    distill_teacher_is_logits = str(distill_teacher_is_logits_raw).lower() == 'on'
+    distill_teacher_prey_index_raw = (request.form.get('local_distill_teacher_prey_index', default='') or '').strip()
+    distill_teacher_not_cat_index_raw = (request.form.get('local_distill_teacher_not_cat_index', default='') or '').strip()
+
+    distill_teacher_prey_index = None
+    distill_teacher_not_cat_index = None
+    try:
+        if distill_teacher_prey_index_raw != '':
+            distill_teacher_prey_index = int(distill_teacher_prey_index_raw)
+    except ValueError:
+        flash('Distill prey index must be an integer.', 'danger')
+        return redirect(url_for('model'))
+    try:
+        if distill_teacher_not_cat_index_raw != '':
+            distill_teacher_not_cat_index = int(distill_teacher_not_cat_index_raw)
+    except ValueError:
+        flash('Distill not_cat index must be an integer.', 'danger')
+        return redirect(url_for('model'))
+
     # Validate epochs
     epoch_limits = LOCAL_PARAM_LIMITS['epochs']
     if epochs is None or epochs < epoch_limits['min'] or epochs > epoch_limits['max']:
@@ -2163,6 +2363,39 @@ def retrain_local_model():
         flash(f"Warmup epochs must be between {warmup_limits['min']} and {warmup_limits['max']}.", 'danger')
         return redirect(url_for('model'))
 
+    if negative_policy not in LOCAL_PARAM_LIMITS.get('negative_policy', ['all', 'cat_entering_only']):
+        flash('Invalid negative policy selected.', 'danger')
+        return redirect(url_for('model'))
+
+    tr_limits = LOCAL_PARAM_LIMITS.get('target_recall', {'min': 0.5, 'max': 0.999})
+    if target_recall is None or target_recall < tr_limits['min'] or target_recall > tr_limits['max']:
+        flash(f"Target recall must be between {tr_limits['min']} and {tr_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
+    if export_output not in LOCAL_PARAM_LIMITS.get('export_output', ['probs', 'logits_margin']):
+        flash('Invalid export output selected.', 'danger')
+        return redirect(url_for('model'))
+
+    els_limits = LOCAL_PARAM_LIMITS.get('export_logit_scale', {'min': 0.1, 'max': 10.0})
+    if export_logit_scale is None or export_logit_scale < els_limits['min'] or export_logit_scale > els_limits['max']:
+        flash(f"Export logit scale must be between {els_limits['min']} and {els_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
+    dm_limits = LOCAL_PARAM_LIMITS.get('dump_misclassified', {'min': 0, 'max': 5000})
+    if dump_misclassified is None or dump_misclassified < dm_limits['min'] or dump_misclassified > dm_limits['max']:
+        flash(f"Dump misclassified must be between {dm_limits['min']} and {dm_limits['max']}.", 'danger')
+        return redirect(url_for('model'))
+
+    if distill_teacher:
+        da_limits = LOCAL_PARAM_LIMITS.get('distill_alpha', {'min': 0.0, 'max': 1.0})
+        if distill_alpha is None or distill_alpha < da_limits['min'] or distill_alpha > da_limits['max']:
+            flash(f"Distill alpha must be between {da_limits['min']} and {da_limits['max']}.", 'danger')
+            return redirect(url_for('model'))
+        dt_limits = LOCAL_PARAM_LIMITS.get('distill_temperature', {'min': 0.5, 'max': 10.0})
+        if distill_temperature is None or distill_temperature < dt_limits['min'] or distill_temperature > dt_limits['max']:
+            flash(f"Distill temperature must be between {dt_limits['min']} and {dt_limits['max']}.", 'danger')
+            return redirect(url_for('model'))
+
     retrain_thread = threading.Thread(
         target=run_local_retraining,
         args=(
@@ -2181,7 +2414,21 @@ def retrain_local_model():
             use_class_weights,
             label_smoothing,
             lr_schedule,
-            warmup_epochs
+            warmup_epochs,
+            negative_policy,
+            prefer_recall,
+            target_recall,
+            export_output,
+            export_logit_scale,
+            split_manifest,
+            dump_misclassified,
+            skip_export,
+            distill_teacher,
+            distill_alpha,
+            distill_temperature,
+            distill_teacher_is_logits,
+            distill_teacher_prey_index,
+            distill_teacher_not_cat_index,
         )
     )
 
@@ -2206,6 +2453,20 @@ def retrain_local_model():
         label_smoothing=label_smoothing,
         lr_schedule=lr_schedule,
         warmup_epochs=warmup_epochs,
+        negative_policy=negative_policy,
+        prefer_recall=prefer_recall,
+        target_recall=target_recall,
+        export_output=export_output,
+        export_logit_scale=export_logit_scale,
+        split_manifest=split_manifest,
+        dump_misclassified=dump_misclassified,
+        skip_export=skip_export,
+        distill_teacher=distill_teacher,
+        distill_alpha=distill_alpha,
+        distill_temperature=distill_temperature,
+        distill_teacher_is_logits=distill_teacher_is_logits,
+        distill_teacher_prey_index=distill_teacher_prey_index,
+        distill_teacher_not_cat_index=distill_teacher_not_cat_index,
     )
     retrain_thread.start()
 
